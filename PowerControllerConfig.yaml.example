@@ -1,0 +1,76 @@
+# This is the configuration file for the PowerController utility 
+
+DeviceType:
+  # Set this to the type of device you are controlling. One of: 
+  #   PoolPump
+  #   HotWaterSystem
+  Type: PoolPump
+  Label: iMac Pool Pump
+  # Set this to the homepage URL of the PowerControllerUI web app. This URL is used to transfer 
+  # device status to the website.
+  WebsiteBaseURL: 
+  WebsiteAccessKey: <Your website API key here>
+
+AmberAPI:
+  # Set this to the API key for your account - get this at app.amber.com.au/developers/
+  APIKey: <Your Amber API key here>
+  BaseUrl: https://api.amber.com.au/v1
+  # Which channel do we get the price data for - one of general or controlledLoad
+  Channel: general
+  Timeout: 15
+
+# Settings for the Shelly Plus smart switch, used switch power to your device
+ShellySmartSwitch:
+  # Set this to the type of Shelly switch device you are using to control the power controlling. One of:
+  # ShellyEM - Gen 1 Shelly energy meter with relay: https://www.shelly.com/products/shelly-em-50a-clamp-1
+  # ShellyPlus1PM - Gen 2 Shelly 1PM switch with meter (discontinued): https://www.shelly.com/products/shelly-plus-1pm
+  # Shelly1PMG3 - Gen 3 Shelly 1PM switch with meter: https://www.shelly.com/products/shelly-1pm-gen3
+  Model: ShellyEM
+  # Set this to the local IP address of your smart switch 
+  IPAddress: <Your Shelly switch IP address here>
+  SwitchID: 0
+  # Set to True when testing and you don't want to update the smart switch status 
+  DisableSwitch: True
+  Timeout: 5
+
+# Your desired settings for the pump's runtime. See the documentation for details.
+# If the device type is HotWaterSystem then only the MaximumPriceToRun and 
+# ThresholdAboveCheapestPricesForMinumumHours parameters are used.
+DeviceRunScheule:
+  MinimumRunHoursPerDay: 2
+  MaximumRunHoursPerDay: 10
+  TargetRunHoursPerDay: 7
+  MaximumPriceToRun: 20
+  ThresholdAboveCheapestPricesForMinumumHours: 1.1
+  # Optionally override the monthly target run hours per day
+  MonthlyTargetRunHoursPerDay:
+
+  # Specify date ranges when the device should not run
+  NoRunPeriods:
+
+Files:
+  # The name of the saved state file. This is used to store the state of the device between runs.
+  SavedStateFile:  PowerControllerState.json
+  # Optional name of a CSV to log the device state and current price to after each run
+  RunLogFile: 
+  RunLogFileMaxLines: 500
+  MonitoringLogFile: PowerController.log
+  MonitoringLogFileMaxLines: 5000
+  # How much information do we write to the log file. One of: none; error; warning; summary; detailed; debug
+  LogFileVerbosity: detailed
+  # How much information do we write to the console. One of: error; warning; summary; detailed; debug
+  ConsoleVerbosity: detailed
+  # Optional name of a json file that will contain a dump of the latest data returned from the Amber API
+  LatestPriceData: 
+
+# Enter your settings here if you want to be emailed when there's a critical error 
+Email:
+  EnableEmail: True
+  SendSummary: False
+  DailyEnergyUseThreshold: 6000
+  SendEmailsTo: <Your email address here>
+  SMTPServer: <Your SMTP server here>
+  SMTPPort: 587
+  SMTPUsername: <Your SMTP username here>
+  SMTPPassword: <Your SMTP password here>
+  SubjectPrefix: 
