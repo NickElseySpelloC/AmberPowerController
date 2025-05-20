@@ -78,7 +78,7 @@ The script uses the *PowerControllerConfig.yaml* YAML file for configuration. An
         SMTPServer: smtp.gmail.com
         SMTPPort: 587
         SMTPUsername: me@gmail.com
-        SMTPPassword: somestrongpassword!
+        SMTPPassword: <Your SMTP password>
 
 ## Configuration Parameters
 ### Section: DeviceType
