@@ -1,29 +1,41 @@
-'''
-PowerController.py
+"""
+PowerController.py.
 
 Version: 10
 
 Goal: To run a high energy device pool pump (or any smart switch controlled device) based on
 electricity prices from the Amber API.
-'''
-import json
-import os
+"""
 import csv
-import sys
+import inspect
+import json
 import math
 import random
-import inspect
+import sys
 from collections import OrderedDict
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
+
 import requests
-from utility import ConfigManager, ShellySwitch, merge_configs, send_email
-from utility import register_logger, register_configurator, register_scheduler_state, report_fatal_error, fatal_error_tracking
+
+from utility import (
+    ConfigManager,
+    ShellySwitch,
+    fatal_error_tracking,
+    merge_configs,
+    register_configurator,
+    register_logger,
+    register_scheduler_state,
+    report_fatal_error,
+    send_email,
+)
 
 CONFIG_FILE = "PowerControllerConfig.yaml"
 GENERAL_API_TIMEOUT = 10
 RANDOMISE_DURATIONS = False
 GENERATE_ENERGY_DATA = False
+HTTP_STATUS_FORBIDDEN = 403
 
 # Setup the active configuration
 SystemConfiguration = ConfigManager()
@@ -45,7 +57,7 @@ def write_log_message(message: str, verbosity: str):
         "warning": 2,
         "summary": 3,
         "detailed": 4,
-        "debug": 5
+        "debug": 5,
     }
 
     config_file_setting = switcher.get(config_file_setting_str, 0)
@@ -66,11 +78,13 @@ def write_log_message(message: str, verbosity: str):
         file_path = SystemConfiguration.select_file_location(config["Files"]["MonitoringLogFile"])
         error_str = " ERROR" if verbosity == "error" else " WARNING" if verbosity == "warning" else ""
         if config_file_setting >= message_level and config_file_setting > 0:
-            with open(file_path, "a", encoding="utf-8") as file:
+            with Path(file_path).open("a", encoding="utf-8") as file:
                 if message == "":
                     file.write("\n")
                 else:
-                    file.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}{error_str}: {message}\n")
+                    # Use the local timezone for the log timestamp
+                    local_tz = datetime.now().astimezone().tzinfo
+                    file.write(f"{datetime.now(local_tz).strftime('%Y-%m-%d %H:%M:%S')}{error_str}: {message}\n")
 
 def initialise_monitoring_logfile():
     """Initialise the monitoring log file. If it exists, truncate it to the max number of lines."""
@@ -79,9 +93,9 @@ def initialise_monitoring_logfile():
 
     file_path = SystemConfiguration.select_file_location(config["Files"]["MonitoringLogFile"])
 
-    if os.path.exists(file_path):
+    if Path(file_path).exists():
         # Monitoring log file exists - truncate excess lines if needed.
-        with open(file_path, 'r', encoding='utf-8') as file:
+        with Path(file_path).open(encoding="utf-8") as file:
             max_lines = config["Files"]["MonitoringLogFileMaxLines"]
 
             if max_lines > 0:
@@ -91,22 +105,23 @@ def initialise_monitoring_logfile():
                     # Keep the last max_lines rows
                     keep_lines = lines[-max_lines:] if len(lines) > max_lines else lines
 
-
                     # Overwrite the file with only the last 1000 lines
-                    with open(file_path, 'w', encoding="utf-8") as file:
-                        file.writelines(keep_lines)
+                    with Path(file_path).open("w", encoding="utf-8") as file2:
+                        file2.writelines(keep_lines)
 
 
 class PowerSchedulerState:
     """Class to manage the state of the power device scheduler."""
+
     def __init__(self):
 
         register_scheduler_state(self)        # Register the scheduler state
+        local_tz = datetime.now().astimezone().tzinfo
 
         # Create a default state dictionary
         self.default_state = {
             "MaxDailyRuntimeAllowed": config["DeviceRunScheule"]["MaximumRunHoursPerDay"],
-            "LastStateSaveTime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "LastStateSaveTime": datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S"),
             "TotalRuntimePriorDays": None,
             "AverageRuntimePriorDays": None,
             "CurrentShortfall": None,
@@ -125,23 +140,23 @@ class PowerSchedulerState:
             "EarlierTotals": {
                 "EnergyUsed": 10000 if GENERATE_ENERGY_DATA else 0,
                 "TotalCost": 203 if GENERATE_ENERGY_DATA else 0,
-                "RunTime": 0
+                "RunTime": 0,
             },
             "AlltimeTotals": {
                 "EnergyUsed": 0,
                 "TotalCost": 0,
                 "AveragePrice": None,
-                "RunTime": 0
+                "RunTime": 0,
                 },
             "TodayRunPlan": [],
             "TodayOriginalRunPlan": [],
             "AverageForecastPrice": None,
-            "DailyData": []
+            "DailyData": [],
         }
 
         # Now populate some defaults for the DailyData[] dictionary
         for i in range(8):
-            date_today = datetime.today() + timedelta(days=-i)  # Offset the date by i days
+            date_today = datetime.now(local_tz) + timedelta(days=-i)  # Offset the date by i days
 
             daily_data = {
                 "ID": i,
@@ -154,18 +169,15 @@ class PowerSchedulerState:
                 "EnergyUsed": 0,
                 "AveragePrice": None,
                 "TotalCost": 0,
-                "DeviceRuns": []  # Initialize as an empty list
+                "DeviceRuns": [],  # Initialize as an empty list
             }
 
             self.default_state["DailyData"].append(daily_data)  # Add the dictionary to the list
 
             # Now add some defaults for the DeviceRuns[] array for prior days
             if i > 0:
-                if RANDOMISE_DURATIONS:
-                    num_runs = random.randint(2, 8)
-                else:
-                    num_runs = 1
-                start_time = datetime.strptime(daily_data["Date"], "%Y-%m-%d")
+                num_runs = random.randint(2, 8) if RANDOMISE_DURATIONS else 1
+                start_time = datetime.strptime(daily_data["Date"], "%Y-%m-%d").astimezone(local_tz)
                 if RANDOMISE_DURATIONS:
                     start_time += timedelta(hours=random.randint(0, 5), minutes=random.randint(0, 40))
 
@@ -220,13 +232,12 @@ class PowerSchedulerState:
             self.skip_run_today = True
 
     def load_state(self):
-        """ Load the current state from the JSON file   """
-
+        """Load the current state from the JSON file."""
         file_path = SystemConfiguration.select_file_location(config["Files"]["SavedStateFile"])
-        if os.path.exists(file_path):
+        if Path(file_path).exists():
 
             try:
-                with open(file_path, "r", encoding="utf-8") as file:
+                with Path(file_path).open(encoding="utf-8") as file:
                     file_state = json.load(file)
                     self.state = merge_configs(self.default_state, file_state)
                     write_log_message(f"Successfully loaded state from {file_path}.", "debug")
@@ -237,25 +248,26 @@ class PowerSchedulerState:
             self.state = self.default_state
 
     def save_state(self):
-        """ Save state to file  """
+        """Save state to file."""
+        local_tz = datetime.now().astimezone().tzinfo
 
         file_path = SystemConfiguration.select_file_location(config["Files"]["SavedStateFile"])
         write_log_message(f"PowerSchedulerState.save_state() Saving state to {file_path}", "debug")
-        self.state["LastStateSaveTime"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.state["LastStateSaveTime"] = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
 
-        with open(file_path, "w", encoding="utf-8") as file:
+        with Path(file_path).open("w", encoding="utf-8") as file:
             json.dump(self.state, file, indent=4)
 
         # Now if the WebsiteBaseURL hasbeen set, save the state to the web server
         if config["DeviceType"]["WebsiteBaseURL"] is not None:
-            api_url = config['DeviceType']['WebsiteBaseURL'] + "/api/submit"
-            
-            if config['DeviceType']['WebsiteAccessKey'] is not None:
-                access_key= config['DeviceType']['WebsiteAccessKey']
+            api_url = config["DeviceType"]["WebsiteBaseURL"] + "/api/submit"
+
+            if config["DeviceType"]["WebsiteAccessKey"] is not None:
+                access_key= config["DeviceType"]["WebsiteAccessKey"]
                 api_url += f"?key={access_key}"  # Add access_key as a query parameter
 
             headers = {
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             }
             json_object = self.state
 
@@ -264,8 +276,8 @@ class PowerSchedulerState:
                 response.raise_for_status()
                 write_log_message(f"Posted PowerSchedulerState to {api_url}", "debug")
             except requests.exceptions.HTTPError as e:
-                if response.status_code == 403:  # Handle 403 Forbidden error
-                    write_log_message(f"Access denied (403 Forbidden) when posting to {api_url}. Check your access key or permissions.", "error")
+                if response.status_code == HTTP_STATUS_FORBIDDEN:  # Handle 403 Forbidden error
+                    write_log_message(f"Access denied ({HTTP_STATUS_FORBIDDEN} Forbidden) when posting to {api_url}. Check your access key or permissions.", "error")
                 else:
                     write_log_message(f"HTTP error saving state to web server at {api_url}: {e}", "warning")
             except requests.exceptions.ConnectionError as e:  # Trap connection error - ConnectionError
@@ -274,22 +286,24 @@ class PowerSchedulerState:
                 report_fatal_error(f"Error saving state to web server at {api_url}: {e}")
 
     def get_daily_data(self, day_number):
-        """ Returns a dict of the data for the specified day (offset days prior to today)
-         If it doesn't exist, returns None """
+        """
+        Returns a dict of the data for the specified day (offset days prior to today).
 
+        If the day doesn't exist, returns None.
+        """
         if 0 <= day_number < len(self.state["DailyData"]):  # Check if day_number is a valid index
             return self.state["DailyData"][day_number]
-        else:
-            return None
+        return None
 
     def set_daily_data(self, day_number, day_data = None):
-        """ Store the dict of the data for the specified day (offset days prior to today) """
+        """Store the dict of the data for the specified day (offset days prior to today)."""
+        local_tz = datetime.now().astimezone().tzinfo
 
-        if day_number < 0 or day_number > 7:
+        if day_number < 0 or day_number > 7:  # noqa: PLR2004
             report_fatal_error(f"Invalid day_number of {day_number} passed.")
 
         # Set the DailyData element using the passed dict. If that's none, set to default values.
-        date_today = datetime.today() + timedelta(days=-day_number)  # Offset the date by i days
+        date_today = datetime.now(local_tz) + timedelta(days=-day_number)  # Offset the date by i days
         if day_data is None:
 
             today_data = {
@@ -303,7 +317,7 @@ class PowerSchedulerState:
                 "EnergyUsed": 0,
                 "AveragePrice": None,
                 "TotalCost": 0,
-                "DeviceRuns": []  # Initialize as an empty list
+                "DeviceRuns": [],  # Initialize as an empty list
             }
             self.state["DailyData"][day_number] = today_data
         else:
@@ -317,11 +331,15 @@ class PowerSchedulerState:
 
         return True
 
-    def consolidate_device_run_data(self, device_state):
-        """ Close off any open device runs for today and merge any concurrent DeviceRuns[] elements
-        device_state is the current state of the switch - a ShellySwitchState object """
+    def consolidate_device_run_data(self, device_state):  # noqa: PLR0912
+        """
+        Close off any open device runs for today and merge any concurrent DeviceRuns[] elements.
 
+        device_state: Device_state is the current state of the switch - a ShellySwitchState object
+        """
         # Make sure we close off the last DeviceRuns[] entry for each day
+        local_tz = datetime.now().astimezone().tzinfo
+
         did_close_run = False
         for day in self.state["DailyData"]:
             if len(day["DeviceRuns"]) > 0:
@@ -330,12 +348,12 @@ class PowerSchedulerState:
                 if last_run["EndTime"] is None: # We have a run that hasn't been closed off yet
                     # If it's a prior day and it wasn't closed off on that day, set end time and duration to 1 sec before midnight
                     did_close_run = True
-                    if day["Date"] != datetime.today().strftime("%Y-%m-%d"):
-                        end_time = datetime.strptime(day["Date"], "%Y-%m-%d") + timedelta(days=1, hours=0, minutes=0, seconds=-1)
+                    if day["Date"] != datetime.now(local_tz).strftime("%Y-%m-%d"):
+                        end_time = datetime.strptime(day["Date"], "%Y-%m-%d").astimezone(local_tz) + timedelta(days=1, hours=0, minutes=0, seconds=-1)
                     else:
-                        end_time = datetime.now()
+                        end_time = datetime.now(local_tz)
                     last_run["EndTime"] = end_time.strftime("%Y-%m-%d %H:%M:%S")
-                    last_run["RunTime"] = round((end_time - datetime.strptime(last_run["StartTime"], "%Y-%m-%d %H:%M:%S")).total_seconds() / 3600, 4)
+                    last_run["RunTime"] = round((end_time - datetime.strptime(last_run["StartTime"], "%Y-%m-%d %H:%M:%S").astimezone(local_tz)).total_seconds() / 3600, 4)
 
                     # Calaculate energy used for this run since it started if our switch is currently available
                     # Note that price was set in log_device_state()
@@ -349,7 +367,7 @@ class PowerSchedulerState:
         # Loop through all the DeviceRuns[] except the last one and see if we need to recalculate the energy used
         todays_data = self.state["DailyData"][0]["DeviceRuns"]
         if len(todays_data) > 1:
-            for run_num in range(0, len(todays_data)-1):
+            for run_num in range(len(todays_data)-1):
                 this_run = todays_data[run_num]
                 next_run = todays_data[run_num + 1]
 
@@ -365,12 +383,12 @@ class PowerSchedulerState:
             for this_run in day["DeviceRuns"]:
                 # If we don't have a run in play, or the start time of this run 1 min after the end time of
                 # the last run, then create a new consolidated element
-                start_time = datetime.strptime(this_run["StartTime"], "%Y-%m-%d %H:%M:%S")
+                start_time = datetime.strptime(this_run["StartTime"], "%Y-%m-%d %H:%M:%S").astimezone(local_tz)
                 if new_device_run is not None:
-                    end_time = datetime.strptime(new_device_run["EndTime"], "%Y-%m-%d %H:%M:%S")
+                    end_time = datetime.strptime(new_device_run["EndTime"], "%Y-%m-%d %H:%M:%S").astimezone(local_tz)
                 else:
                     end_time = None
-                if new_device_run is None or (start_time - end_time).total_seconds() > 60:
+                if new_device_run is None or (start_time - end_time).total_seconds() > 60:  # noqa: PLR2004
 
                     # Create a new consolidated run object that we will add to the array
                     new_device_run = {
@@ -405,7 +423,7 @@ class PowerSchedulerState:
         return did_close_run
 
     def is_device_run_open(self):
-        """ Check if there are any open device runs """
+        """Check if there are any open device runs."""
         data_today = self.state["DailyData"][0]
         device_open = False
 
@@ -416,14 +434,15 @@ class PowerSchedulerState:
 
         return device_open
 
-    def calculate_running_totals(self):
-        """ Confirm that no day rollover is needed """
+    def calculate_running_totals(self):  # noqa: PLR0915
+        """Confirm that no day rollover is needed."""
+        local_tz = datetime.now().astimezone().tzinfo
 
-        if self.state["DailyData"][0]["Date"] != datetime.today().strftime("%Y-%m-%d"):
+        if self.state["DailyData"][0]["Date"] != datetime.now(local_tz).strftime("%Y-%m-%d"):
             report_fatal_error("called when DailyData[0] was not today")
 
         # Current date and time
-        now = datetime.now()
+        now = datetime.now(local_tz)
 
         # Loop through each day starting with the oldest through to today and recalculate all the aggregate values
         # Reset the global aggregate numbers
@@ -468,10 +487,8 @@ class PowerSchedulerState:
                 day_data["TargetRuntime"] = day_data["RequiredDailyRuntime"]
             else:
                 day_data["TargetRuntime"] = day_data["RequiredDailyRuntime"] + day_data["PriorShortfall"]
-                if day_data["TargetRuntime"] < config["DeviceRunScheule"]["MinimumRunHoursPerDay"]:
-                    day_data["TargetRuntime"] = config["DeviceRunScheule"]["MinimumRunHoursPerDay"]
-                if day_data["TargetRuntime"] > config["DeviceRunScheule"]["MaximumRunHoursPerDay"]:
-                    day_data["TargetRuntime"] = config["DeviceRunScheule"]["MaximumRunHoursPerDay"]
+                day_data["TargetRuntime"] = max(day_data["TargetRuntime"], config["DeviceRunScheule"]["MinimumRunHoursPerDay"])
+                day_data["TargetRuntime"] = min(day_data["TargetRuntime"], config["DeviceRunScheule"]["MaximumRunHoursPerDay"])
 
             # Calculate running_shortfall to be used for the next day
             if config["DeviceType"]["Type"] == "PoolPump":
@@ -523,40 +540,39 @@ class PowerSchedulerState:
         self.state["DailyData"][0]["RemainingRuntimeToday"] = remaining_runtime
 
     def check_day_rollover(self):
-        """ Check if a new day has started and update history accordingly. """
+        """Check if a new day has started and update history accordingly."""
+        local_tz = datetime.now().astimezone().tzinfo
 
-        current_date = datetime.now().strftime("%Y-%m-%d")
+        current_date = datetime.now(local_tz).strftime("%Y-%m-%d")
         daily_data = self.get_daily_data(0)     # Get the daily data for today if any
         if daily_data is None:
             # We have no daily data for today, nothing to do yet
             return False
-        else:
-            # See if date for 0 element is prior to today
-            if daily_data["Date"] == current_date:
-                return False
+        # See if date for 0 element is prior to today
+        if daily_data["Date"] == current_date:
+            return False
 
-            write_log_message("PowerSchedulerState.check_day_rollover(): New day detected, rolling data over to prior days.", "debug")
+        write_log_message("PowerSchedulerState.check_day_rollover(): New day detected, rolling data over to prior days.", "debug")
 
-            #First increment the EarlierTotals for the oldest date that we're loosing
-            self.state["EarlierTotals"]["EnergyUsed"] += self.state["DailyData"][7]["EnergyUsed"]
-            self.state["EarlierTotals"]["TotalCost"] += self.state["DailyData"][7]["TotalCost"]
-            self.state["EarlierTotals"]["RunTime"] += self.state["DailyData"][7]["RuntimeToday"]
+        #First increment the EarlierTotals for the oldest date that we're loosing
+        self.state["EarlierTotals"]["EnergyUsed"] += self.state["DailyData"][7]["EnergyUsed"]
+        self.state["EarlierTotals"]["TotalCost"] += self.state["DailyData"][7]["TotalCost"]
+        self.state["EarlierTotals"]["RunTime"] += self.state["DailyData"][7]["RuntimeToday"]
 
-            for i in range(7, 0, -1):
-                daily_data = self.get_daily_data(i - 1)
-                self.set_daily_data(i, daily_data)
+        for i in range(7, 0, -1):
+            daily_data = self.get_daily_data(i - 1)
+            self.set_daily_data(i, daily_data)
 
-            # Now initialise data for today
-            self.set_daily_data(0)
+        # Now initialise data for today
+        self.set_daily_data(0)
 
-            # Check the energy use for the prior day
-            self.check_yesterday_energy_usage()
+        # Check the energy use for the prior day
+        self.check_yesterday_energy_usage()
 
-            return True
+        return True
 
     def check_yesterday_energy_usage(self):
-        """ Check if the energy used yesterday was more than expected. """
-
+        """Check if the energy used yesterday was more than expected."""
         # Get the daily data for yesterday
         yesterday_data = self.get_daily_data(1)
         if yesterday_data is None:
@@ -565,19 +581,19 @@ class PowerSchedulerState:
 
         # Check if the energy used was less than expected
         threashold = config["Email"]["DailyEnergyUseThreshold"] or 0
-        if threashold > 0:
-            if yesterday_data["EnergyUsed"] > threashold:
-                warning_msg = f"{self.state['DeviceName']} energy used on {yesterday_data['Date']} was {yesterday_data['EnergyUsed']:.0f} watts, which exceeded the expected limit of {threashold}."
-                write_log_message(warning_msg, "warning")
+        if threashold > 0 and yesterday_data["EnergyUsed"] > threashold:
+            warning_msg = f"{self.state['DeviceName']} energy used on {yesterday_data['Date']} was {yesterday_data['EnergyUsed']:.0f} watts, which exceeded the expected limit of {threashold}."
+            write_log_message(warning_msg, "warning")
 
-                # Send an email notification if configured
-                send_email("Energy Usage Alert", warning_msg)
+            # Send an email notification if configured
+            send_email("Energy Usage Alert", warning_msg)
 
     def set_current_price(self, price):
         """Sets the current price in the state dictionary."""
+        local_tz = datetime.now().astimezone().tzinfo
 
         self.state["CurrentPrice"] = price
-        self.state["PriceTime"] = datetime.now().strftime("%Y-%m-%d %H:%M:00")
+        self.state["PriceTime"] = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:00")
 
     def __getitem__(self, index):
         """Allows access to the state dictionary using square brackets."""
@@ -590,10 +606,13 @@ class PowerSchedulerState:
 
 class PriceData:
     """Class to manage the Amber price data for the device scheduler."""
-    def __init__(self):
-        """ Initialise the PriceData class. Gets the Amber price data and builds
-        the array of prices. """
 
+    def __init__(self):
+        """
+        Initialise the PriceData class.
+
+        Gets the Amber price data and builds the array of prices.
+        """
         # Get the Amber site ID.
         self.site_id = self.get_site_id()
 
@@ -608,14 +627,13 @@ class PriceData:
         self.prices_sorted.sort(key=lambda x: x["Price"])
 
     def get_site_id(self):
-        """Fetches the site ID from the Amber API. """
-
+        """Fetches the site ID from the Amber API."""
         headers = {
             "accept": "application/json",
-            "Authorization": f"Bearer {config['AmberAPI']['APIKey']}"
+            "Authorization": f"Bearer {config['AmberAPI']['APIKey']}",
         }
         try:
-            url = config['AmberAPI']['BaseUrl'] + "/sites"
+            url = config["AmberAPI"]["BaseUrl"] + "/sites"
             write_log_message(f"Getting Amber site ID using API call: {url}", "debug")
 
             response = requests.get(f"{url}", headers=headers, timeout=config["AmberAPI"]["Timeout"])
@@ -624,6 +642,7 @@ class PriceData:
             for site in sites:
                 if site.get("status") == "active":
                     return site.get("id")
+
             write_log_message("No active sites found.", "error")
             return None
         except requests.exceptions.ConnectionError as e:  # Trap connection error - ConnectionError
@@ -634,12 +653,11 @@ class PriceData:
 
         except requests.exceptions.RequestException as e:
             report_fatal_error(f"Error fetching Amber site ID: {e}")
-
-        return None
+        else:
+            return None
 
     def get_prices(self):
         """Fetches the price forecast and saves the full JSON response."""
-
         if not self.site_id:
             write_log_message("No site Amber ID available. Cannot fetch prices.", "error")
             return None
@@ -648,7 +666,7 @@ class PriceData:
 
         headers = {
             "accept": "application/json",
-            "Authorization": f"Bearer {config['AmberAPI']['APIKey']}"
+            "Authorization": f"Bearer {config['AmberAPI']['APIKey']}",
         }
         url = f"{config['AmberAPI']['BaseUrl']}/sites/{self.site_id}/prices/current?next=47&previous=0&resolution=30"
 
@@ -685,35 +703,36 @@ class PriceData:
             lastest_price_data_path = SystemConfiguration.select_file_location(config["Files"]["LatestPriceData"])
             write_log_message(f"Saving latest price data to {lastest_price_data_path}", "detailed")
 
-            with open(lastest_price_data_path, "w", encoding="utf-8") as json_file:
+            with Path(lastest_price_data_path).open("w", encoding="utf-8") as json_file:
                 json.dump(enhanced_data, json_file, indent=4)
 
         return enhanced_data
 
     def process_amber_prices(self, amber_prices):
-        """Processes the enriched Amber price dictionary and build our custom dictionary
-        for prices in the required channel through to midnight ."""
+        """
+        Processes the enriched Amber price dictionary.
 
+        Build our custom dictionary for prices in the required channel through to midnight.
+        """
+        local_tz = datetime.now().astimezone().tzinfo
         return_prices = []
         slot = 0
         for amber_entry in amber_prices:
             # If we've moved into the next day, break
-            entry_start_time = datetime.strptime(amber_entry["localStartTime"], "%Y-%m-%dT%H:%M:%S")
-            # If the entry if for today
-            if entry_start_time.date() == datetime.today().date():
-                # If this entry is the required channel, add it to the list
-                if amber_entry.get("channelType") == config["AmberAPI"]["Channel"]:
-                    price_entry = {
-                        "Slot": slot,
-                        "StartTime": amber_entry["localStartTime"].replace("T", " "),
-                        "EndTime": amber_entry["localEndTime"].replace("T", " "),
-                        "Price": amber_entry["perKwh"],
-                        "Channel": amber_entry["channelType"],
-                        "Selected": None,
-                    }
+            entry_start_time = datetime.strptime(amber_entry["localStartTime"], "%Y-%m-%dT%H:%M:%S").astimezone(local_tz)
+            # If the entry is for today and is the required channel, add it to the list
+            if entry_start_time.date() == datetime.now(local_tz).date() and amber_entry.get("channelType") == config["AmberAPI"]["Channel"]:
+                price_entry = {
+                    "Slot": slot,
+                    "StartTime": amber_entry["localStartTime"].replace("T", " "),
+                    "EndTime": amber_entry["localEndTime"].replace("T", " "),
+                    "Price": amber_entry["perKwh"],
+                    "Channel": amber_entry["channelType"],
+                    "Selected": None,
+                }
 
-                    return_prices.append(price_entry)
-                    slot += 1
+                return_prices.append(price_entry)
+                slot += 1
 
         if len(return_prices) == 0:
             report_fatal_error(f"No Amber prices found for the {config['AmberAPI']['Channel']} channel.")
@@ -724,23 +743,21 @@ class PriceData:
 
     def get_current_price(self):
         """Fetches the current price from the Amber API."""
-
         return self.prices[0]["Price"]
 
     def get_worst_price(self):
         """Fetches the worst price from the Amber API."""
-
         return self.prices_sorted[-1]["Price"]
 
     def convert_utc_dt_string(self, utc_time_str: str) -> str:
         """Converts a UTC datetime string to a local datetime string."""
-
         # Parse the string into a datetime object (with UTC timezone)
+        local_tz = datetime.now().astimezone().tzinfo
         utc_dt = datetime.strptime(utc_time_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=ZoneInfo("UTC")).replace(tzinfo=None)
 
         # ZoneInfo() fails for my AEST timezone, so instead calculate the current time difference for UTC and local time
-        local_timenow = datetime.now().replace(tzinfo=None)
-        utc_timenow = datetime.now(timezone.utc).replace(tzinfo=None)
+        local_timenow = datetime.now(local_tz).replace(tzinfo=None)
+        utc_timenow = datetime.now(UTC).replace(tzinfo=None)
 
         tz_diff = local_timenow - utc_timenow + timedelta(0,1)
 
@@ -752,9 +769,10 @@ class PriceData:
 
 class PowerScheduler:
     """Class to manage the device scheduling based on electricity prices."""
-    def __init__(self):
-        """ Initialise the PowerScheduler class. """
 
+    def __init__(self):
+        """Initialise the PowerScheduler class."""
+        local_tz = datetime.now().astimezone().tzinfo
         initialise_monitoring_logfile()
 
         # Create an instance of the PowerScheduleState dictionary and load the prior state from file
@@ -764,10 +782,10 @@ class PowerScheduler:
         # Log a warning it it's been more than 30 mins since the last state save
         last_state_save_time = self.state["LastStateSaveTime"]
         if last_state_save_time is not None:
-            last_state_save_time = datetime.strptime(last_state_save_time, "%Y-%m-%d %H:%M:%S")
-            now = datetime.now()
+            last_state_save_time = datetime.strptime(last_state_save_time, "%Y-%m-%d %H:%M:%S").astimezone(local_tz)
+            now = datetime.now(local_tz)
             time_diff = now - last_state_save_time
-            if time_diff.total_seconds() > 1800:
+            if time_diff.total_seconds() > 1800:  # noqa: PLR2004
                 write_log_message(f"{self.state['DeviceName']} last run time was {time_diff.total_seconds() / 3600:.1f} hours ago. This is too long - please run at least every 30 minutes.", "warning")
 
         # Create an instance of the PriceData class and get the latest prices for the remainder of today
@@ -778,17 +796,17 @@ class PowerScheduler:
         self.state.set_current_price(current_price)
 
     def register_switch(self, shelly_switch):
-        """ Register the Shelly switch with the scheduler."""
+        """Register the Shelly switch with the scheduler."""
         self.switch = shelly_switch
 
     def get_current_slot(self):
         """Calculate the current 30-minute slot based on system time."""
-        now = datetime.now()
+        local_tz = datetime.now().astimezone().tzinfo
+        now = datetime.now(local_tz)
         return (now.hour * 2) + (now.minute // 30)
 
     def should_device_run(self):
         """Determines if the device should run in the current slot."""
-
         # Calculate how many slots we need to run today
         required_slots, selected_slots = self.calculate_required_slots()
 
@@ -815,16 +833,18 @@ class PowerScheduler:
             # Write the run log to file if needed
             if not self.switch.switch_online:
                 run_device = None
-            self.write_csv_runlog(selected_slots, self.price_data.prices[0]['Price'], self.state["AverageForecastPrice"], run_device)
+            self.write_csv_runlog(selected_slots, self.price_data.prices[0]["Price"], self.state["AverageForecastPrice"], run_device)
 
         # Save the run plan to the file
         self.state.save_state()
         return run_device
 
     def calculate_required_slots(self):
-        """Calculate the required slots and identify the cheapest slots. Returns the number of slots 
-        that we need and the number of slots that we have actually selected."""
+        """
+        Calculate the required slots and identify the cheapest slots.
 
+        Returns the number of slots that we need and the number of slots that we have actually selected.
+        """
         available_slots = len(self.price_data.prices)
         remaining_hours = self.state["DailyData"][0]["RemainingRuntimeToday"]
         required_slots = math.ceil(remaining_hours * 2)
@@ -856,7 +876,6 @@ class PowerScheduler:
 
     def evaluate_run_conditions(self):
         """Evaluate the conditions to determine if the device should run."""
-
         worst_price = self.price_data.get_worst_price()
         current_price = self.price_data.get_current_price()
         reason_why_message = None
@@ -900,9 +919,9 @@ class PowerScheduler:
         self.flag_current_slot(run_device)
         return run_device, reason_why_message, override_message
 
-    def record_run_plan(self, run_device, selected_slots, reason_why_message, override_message):
+    def record_run_plan(self, run_device, selected_slots, reason_why_message, override_message):  # noqa: PLR0915
         """Record the run plan for the device based on the calculated slots and conditions."""
-
+        local_tz = datetime.now().astimezone().tzinfo
         self.state["TodayRunPlan"].clear()
 
         # Make up a run plan for the time slots we are going to use
@@ -916,7 +935,7 @@ class PowerScheduler:
             # price_idx is offset into prices[] array
             if price["Selected"]:
                 # This is a price slot we are using
-                end_time = datetime.strptime(price["EndTime"], "%Y-%m-%d %H:%M:%S")
+                end_time = datetime.strptime(price["EndTime"], "%Y-%m-%d %H:%M:%S").astimezone(local_tz)
 
                 # If the prior slot was selected as well then it's concurrent
                 if price_idx > 0 and self.price_data.prices[price_idx - 1]["Selected"]:
@@ -930,12 +949,12 @@ class PowerScheduler:
                     # There's a gap since the last once, so add a new entry
                     total_price = price["Price"]
                     concurrent_count = 1
-                    start_time = datetime.strptime(price["StartTime"], "%Y-%m-%d %H:%M:%S")
+                    start_time = datetime.strptime(price["StartTime"], "%Y-%m-%d %H:%M:%S").astimezone(local_tz)
                     run_item = {
                         "ID": i,
                         "From": start_time.strftime("%H:%M"),
                         "To": end_time.strftime("%H:%M"),
-                        "AveragePrice": round(total_price / concurrent_count, 2)
+                        "AveragePrice": round(total_price / concurrent_count, 2),
                     }
                     self.state["TodayRunPlan"].append(run_item)     # Add this slot to the run plan
                     i += 1
@@ -971,41 +990,38 @@ class PowerScheduler:
                 final_message += f"Won't run because {reason_why_message}. "
                 self.state["LastStatusMessage"] = f"{self.state['DeviceName']} won't run because {reason_why_message}"
 
-        # Append the run plan 
+        # Append the run plan
         if device_run_plan_msg != "":
             final_message += f" {self.state['DeviceName']} run plan:\n{device_run_plan_msg}"
 
         write_log_message(final_message, "summary")
         if config["Email"]["SendSummary"]:
-            subject = f"{self.state['DeviceName']} scheduler Summary for {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            subject = f"{self.state['DeviceName']} scheduler Summary for {datetime.now(local_tz).strftime('%Y-%m-%d %H:%M')}"
             send_email(subject, final_message)
 
         # Write the run log to file if needed
-        if not self.switch.switch_online:
-            device_state = None
-        else:
-            device_state = run_device
-        self.write_csv_runlog(selected_slots, self.price_data.prices[0]['Price'], average_forecast_price, device_state)
+        device_state = None if not self.switch.switch_online else run_device
+        self.write_csv_runlog(selected_slots, self.price_data.prices[0]["Price"], average_forecast_price, device_state)
 
     def write_csv_runlog(self, required_slots, amber_price, forecast_price, should_run):
         """Initialise the run log file. If it exists, truncate it to the max number of lines."""
-
+        local_tz = datetime.now().astimezone().tzinfo
         if config["Files"]["RunLogFile"] is None:
             write_log_message("No log file specified. Run log will not be saved.", "debug")
             return
 
         file_path = SystemConfiguration.select_file_location(config["Files"]["RunLogFile"])
-        SwitchState = ""
+        switch_state = ""
         if should_run is None:
-            SwitchState = "Unavailable"
+            switch_state = "Unavailable"
         elif should_run:
-            SwitchState = "On"
+            switch_state = "On"
         elif not should_run:
-            SwitchState = "Off"
+            switch_state = "Off"
 
-        if os.path.exists(file_path):
+        if Path(file_path).exists():
             # CSV log file exists - truncate excess lines if needed
-            with open(file_path, 'r', newline='', encoding='utf-8') as file:
+            with Path(file_path).open(newline="", encoding="utf-8") as file:
                 max_lines = config["Files"]["RunLogFileMaxLines"]
 
                 if max_lines > 0:
@@ -1018,26 +1034,26 @@ class PowerScheduler:
                         data = reader[-max_lines:]  # Keep the last max_lines rows
 
                         # Rewrite the file with the trimmed content
-                        with open(file_path, 'w', newline='', encoding='utf-8') as file:
-                            writer = csv.writer(file)
+                        with Path(file_path).open("w", newline="", encoding="utf-8") as file2:
+                            writer = csv.writer(file2)
                             writer.writerow(header)  # Write header back
                             writer.writerows(data)  # Write last max_lines rows
         else:
             # CSV log file doesn't exist - create one with the header.
-            with open(file_path, mode="w", newline="", encoding="utf-8") as file:
+            with Path(file_path).open(mode="w", newline="", encoding="utf-8") as file:
                 writer = csv.writer(file)
-                writer.writerow(["CurrentTime", "RequiredSlots", "CurrentPrice", "AverageForecastPrice", "SwitchState" ])
+                writer.writerow(["CurrentTime", "RequiredSlots", "CurrentPrice", "AverageForecastPrice", "switch_state" ])
 
                 write_log_message(f"Created new run log file at {file_path}.", "detailed")
 
 
         # Finally, write the run log to file if needed
-        with open(file_path, mode="a", newline="", encoding="utf-8") as file:
-            csv.writer(file).writerow([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), required_slots,  round(amber_price, 2), round(forecast_price, 2), SwitchState])
+        with Path(file_path).open(mode="a", newline="", encoding="utf-8") as file:
+            csv.writer(file).writerow([datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S"), required_slots,  round(amber_price, 2), round(forecast_price, 2), switch_state])
 
     def validate_device_state(self, device_state):
-        """ Validate the device state object """
-
+        """Validate the device state object."""
+        local_tz = datetime.now().astimezone().tzinfo
         if device_state is None:
             report_fatal_error("called with None value")
 
@@ -1046,22 +1062,22 @@ class PowerScheduler:
 
         # Check to see how long the pool device has been running for
         if self.state["IsDeviceRunning"] and config["DeviceType"]["Type"] == "PoolPump":
-            start_time = datetime.strptime(self.state["DeviceLastStartTime"], "%Y-%m-%d %H:%M:%S")
+            start_time = datetime.strptime(self.state["DeviceLastStartTime"], "%Y-%m-%d %H:%M:%S").astimezone(local_tz)
             max_hours = config["DeviceRunScheule"]["MaximumRunHoursPerDay"]
-            running_hours = (datetime.now() - start_time).total_seconds() / 3600
+            running_hours = (datetime.now(local_tz) - start_time).total_seconds() / 3600
             if running_hours > max_hours:
                 write_log_message(f"{self.state['DeviceName']} appears to have been running for {running_hours:.1f} hours, more than maximum of {max_hours} hours. This should never happen. ", "error")
 
                 # Reset the start time so that we don't get this error every time
-                self.state["DeviceLastStartTime"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self.state["DeviceLastStartTime"] = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
                 return False
 
         return True
 
     def log_device_state(self, old_device_state, new_device_state):
-        """ Record the state change of the device switch """
-
+        """Record the state change of the device switch."""
         function_name = self.__class__.__name__ + "." + inspect.currentframe().f_code.co_name + "()"
+        local_tz = datetime.now().astimezone().tzinfo
 
         # old_device_state and new_device_state are instances of ShellySwitchState
         if old_device_state is None or new_device_state is None:
@@ -1084,19 +1100,19 @@ class PowerScheduler:
 
                 run_item = {
                     "ID": len(self.state["DailyData"][0]["DeviceRuns"]),
-                    "StartTime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "StartTime": datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S"),
                     "EndTime": None,
                     "RunTime": None,
                     "EnergyUsedStart": new_device_state["EnergyUsed"],
                     "EnergyUsedForRun": None,
                     "Price": round(self.state["CurrentPrice"], 2),
-                    "Cost": None
+                    "Cost": None,
                 }
                 self.state["DailyData"][0]["DeviceRuns"].append(run_item)
 
                 self.state["IsDeviceRunning"] = True
                 if self.state["DeviceLastStartTime"] is None:
-                    self.state["DeviceLastStartTime"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    self.state["DeviceLastStartTime"] = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
                     self.state["EnergyAtLastStart"] = new_device_state["EnergyUsed"]
             else:
                 run_num = len(self.state["DailyData"][0]["DeviceRuns"])
@@ -1133,10 +1149,9 @@ if __name__ == "__main__":
         current_switch_status = smart_switch.get_status()
 
         #Make sure the switch is in the correct state
-        if current_switch_status is not None:
-            if not scheduler.validate_device_state(current_switch_status):
-                CRITICAL_ERROR = f"device appears to have been running for more than {config['DeviceRunScheule']['MaximumRunHoursPerDay']} hours. This should never happen. See log file for details."
-                send_email("PowerController device was running for too long", CRITICAL_ERROR)
+        if current_switch_status is not None and not scheduler.validate_device_state(current_switch_status):
+            CRITICAL_ERROR = f"device appears to have been running for more than {config['DeviceRunScheule']['MaximumRunHoursPerDay']} hours. This should never happen. See log file for details."
+            send_email("PowerController device was running for too long", CRITICAL_ERROR)
 
         # Close out any open device runs and update the state
         scheduler.state.consolidate_device_run_data(current_switch_status)
@@ -1170,6 +1185,6 @@ if __name__ == "__main__":
         sys.exit(0)
 
     # Handle any other untrapped exception
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         main_fatal_error = f"PowerController terminated unexpectedly due to unexpected error: {e}"
         report_fatal_error(main_fatal_error, report_stack=True)
