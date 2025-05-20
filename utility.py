@@ -1,10 +1,4 @@
-"""
-PCUtility.py.
-
-Version: 10
-
-Goal: Supporting clases for the main module.
-"""
+"""General utility functions for the project."""
 
 import inspect
 import json
@@ -100,7 +94,7 @@ def send_email(subject, body):
         not var for var in [send_to, smtp_server, smtp_port, sender_email, app_password]
     ):
         report_fatal_error(
-            "SMTP configuration is incomplete. Please check the settings."
+            "SMTP configuration is incomplete. Please check the settings.",
         )
 
     try:
@@ -690,7 +684,7 @@ class ShellySwitchState:
             # Used secs elapsed since reference datetime to fake out current energy usage reading from switch
             if GENERATE_ENERGY_DATA:
                 reference_time = datetime.strptime(
-                    REFERENCE_TIME_STR, "%Y-%m-%d %H:%M:%S"
+                    REFERENCE_TIME_STR, "%Y-%m-%d %H:%M:%S",
                 ).astimezone(local_tz)
                 self.switch_state["EnergyUsed"] = (
                     int((datetime.now(local_tz) - reference_time).total_seconds())
@@ -721,7 +715,7 @@ class ShellySwitchState:
         self,
         is_on: bool,
         power: float,
-        voltage: float,  # noqa: FBT001
+        voltage: float,
         current: float,
         energy_used: float,
         temperature: float,
@@ -755,7 +749,7 @@ class ShellySwitch:
         self.switch_online = True
         if not config_settings["ShellySmartSwitch"]["DisableSwitch"]:
             self.switch_online = ping_host(
-                self.ip_address, timeout=config_settings["ShellySmartSwitch"]["Timeout"]
+                self.ip_address, timeout=config_settings["ShellySmartSwitch"]["Timeout"],
             )
 
     def get_status(self):
@@ -785,7 +779,7 @@ class ShellySwitch:
                 switch_state, fatal_error = self.get_gen2_switch_status()
             else:
                 report_fatal_error(
-                    f"Unsupported Shelly switch model: {config_settings['ShellySmartSwitch']['Model']}"
+                    f"Unsupported Shelly switch model: {config_settings['ShellySmartSwitch']['Model']}",
                 )
 
             if switch_state is None:
@@ -971,7 +965,7 @@ class ShellySwitch:
 
             # Used secs elapsed since reference datetime to fake out current energy usage reading from switch
             reference_time = datetime.strptime(
-                REFERENCE_TIME_STR, "%Y-%m-%d %H:%M:%S"
+                REFERENCE_TIME_STR, "%Y-%m-%d %H:%M:%S",
             ).astimezone(local_tz)
             switch.switch_state["EnergyUsed"] = (
                 int((datetime.now(local_tz) - reference_time).total_seconds())
@@ -1006,7 +1000,7 @@ class ShellySwitch:
                 new_status, fatal_error = self.change_gen2_switch(turn_on)
             else:
                 report_fatal_error(
-                    f"Unsupported Shelly switch model: {config_settings['ShellySmartSwitch']['Model']}"
+                    f"Unsupported Shelly switch model: {config_settings['ShellySmartSwitch']['Model']}",
                 )
 
             if new_status is None:
@@ -1076,7 +1070,7 @@ class ShellySwitch:
 
         if new_status != turn_on:
             report_fatal_error(
-                f"The new state of the Shelly energy meter relay was not as expected. Expected: {turn_on}, Actual: {new_status}"
+                f"The new state of the Shelly energy meter relay was not as expected. Expected: {turn_on}, Actual: {new_status}",
             )
 
         new_status_str = "on" if new_status else "off"

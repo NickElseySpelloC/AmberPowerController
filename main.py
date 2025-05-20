@@ -299,7 +299,7 @@ class PowerSchedulerState:
         """Store the dict of the data for the specified day (offset days prior to today)."""
         local_tz = datetime.now().astimezone().tzinfo
 
-        if day_number < 0 or day_number > 7:  # noqa: PLR2004
+        if day_number < 0 or day_number > 7:
             report_fatal_error(f"Invalid day_number of {day_number} passed.")
 
         # Set the DailyData element using the passed dict. If that's none, set to default values.
@@ -388,7 +388,7 @@ class PowerSchedulerState:
                     end_time = datetime.strptime(new_device_run["EndTime"], "%Y-%m-%d %H:%M:%S").astimezone(local_tz)
                 else:
                     end_time = None
-                if new_device_run is None or (start_time - end_time).total_seconds() > 60:  # noqa: PLR2004
+                if new_device_run is None or (start_time - end_time).total_seconds() > 60:
 
                     # Create a new consolidated run object that we will add to the array
                     new_device_run = {
@@ -785,7 +785,7 @@ class PowerScheduler:
             last_state_save_time = datetime.strptime(last_state_save_time, "%Y-%m-%d %H:%M:%S").astimezone(local_tz)
             now = datetime.now(local_tz)
             time_diff = now - last_state_save_time
-            if time_diff.total_seconds() > 1800:  # noqa: PLR2004
+            if time_diff.total_seconds() > 1800:
                 write_log_message(f"{self.state['DeviceName']} last run time was {time_diff.total_seconds() / 3600:.1f} hours ago. This is too long - please run at least every 30 minutes.", "warning")
 
         # Create an instance of the PriceData class and get the latest prices for the remainder of today
