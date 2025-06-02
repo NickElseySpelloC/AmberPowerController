@@ -1,7 +1,5 @@
 """
-PowerController.py.
-
-Version: 10
+main.py.
 
 Goal: To run a high energy device pool pump (or any smart switch controlled device) based on
 electricity prices from the Amber API.
@@ -14,113 +12,36 @@ import random
 import sys
 from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
+from sc_utility import SCConfigManager, SCLogger
 
-from utility import (
-    ConfigManager,
-    ShellySwitch,
-    fatal_error_tracking,
-    merge_configs,
-    register_configurator,
-    register_logger,
-    register_scheduler_state,
-    report_fatal_error,
-    send_email,
-)
+from config_schemas import ConfigSchema
+from helper import AmberHelper
+from shelly_switch import ShellySwitch
 
-CONFIG_FILE = "PowerControllerConfig.yaml"
+CONFIG_FILE = "config.yaml"
 GENERAL_API_TIMEOUT = 10
 RANDOMISE_DURATIONS = False
 GENERATE_ENERGY_DATA = False
 HTTP_STATUS_FORBIDDEN = 403
 
-# Setup the active configuration
-SystemConfiguration = ConfigManager()
-config = SystemConfiguration.get_config()
-
-
-def write_log_message(message: str, verbosity: str):
-    """Writes a log message to the console and/or a file based on verbosity settings."""
-    config_file_setting_str = config["Files"]["LogFileVerbosity"]
-    console_setting_str = config["Files"]["ConsoleVerbosity"]
-
-    if verbosity not in ["error", "warning", "summary", "detailed", "debug"]:
-        print("Invalid verbosity setting passed to write_log_message(). Must be 'summary' or 'detailed'.", file=sys.stderr)
-        sys.exit(1)
-
-    switcher = {
-        "none": 0,
-        "error": 1,
-        "warning": 2,
-        "summary": 3,
-        "detailed": 4,
-        "debug": 5,
-    }
-
-    config_file_setting = switcher.get(config_file_setting_str, 0)
-    console_setting = switcher.get(console_setting_str, 0)
-    message_level = switcher.get(verbosity, 0)
-
-    # Deal with console message first
-    if console_setting >= message_level and console_setting > 0:
-        if verbosity == "error":
-            print("ERROR: " + message, file=sys.stderr)
-        elif verbosity == "warning":
-            print("WARNING: " + message)
-        else:
-            print(message)
-
-    # Now write to the log file if needed
-    if config["Files"]["MonitoringLogFile"] is not None:
-        file_path = SystemConfiguration.select_file_location(config["Files"]["MonitoringLogFile"])
-        error_str = " ERROR" if verbosity == "error" else " WARNING" if verbosity == "warning" else ""
-        if config_file_setting >= message_level and config_file_setting > 0:
-            with Path(file_path).open("a", encoding="utf-8") as file:
-                if message == "":
-                    file.write("\n")
-                else:
-                    # Use the local timezone for the log timestamp
-                    local_tz = datetime.now().astimezone().tzinfo
-                    file.write(f"{datetime.now(local_tz).strftime('%Y-%m-%d %H:%M:%S')}{error_str}: {message}\n")
-
-def initialise_monitoring_logfile():
-    """Initialise the monitoring log file. If it exists, truncate it to the max number of lines."""
-    if config["Files"]["MonitoringLogFile"] is None:
-        return
-
-    file_path = SystemConfiguration.select_file_location(config["Files"]["MonitoringLogFile"])
-
-    if Path(file_path).exists():
-        # Monitoring log file exists - truncate excess lines if needed.
-        with Path(file_path).open(encoding="utf-8") as file:
-            max_lines = config["Files"]["MonitoringLogFileMaxLines"]
-
-            if max_lines > 0:
-                lines = file.readlines()
-
-                if len(lines) > max_lines:
-                    # Keep the last max_lines rows
-                    keep_lines = lines[-max_lines:] if len(lines) > max_lines else lines
-
-                    # Overwrite the file with only the last 1000 lines
-                    with Path(file_path).open("w", encoding="utf-8") as file2:
-                        file2.writelines(keep_lines)
-
 
 class PowerSchedulerState:
     """Class to manage the state of the power device scheduler."""
 
-    def __init__(self):
-
-        register_scheduler_state(self)        # Register the scheduler state
+    def __init__(self, config, logger):
+        self.config = config
+        self.logger = logger
         local_tz = datetime.now().astimezone().tzinfo
+
+        #Create an instance of the AmberHelper class
+        self.helper = AmberHelper(config, logger)
 
         # Create a default state dictionary
         self.default_state = {
-            "MaxDailyRuntimeAllowed": config["DeviceRunScheule"]["MaximumRunHoursPerDay"],
+            "MaxDailyRuntimeAllowed": self.config.get("DeviceRunScheule", "MaximumRunHoursPerDay"),
             "LastStateSaveTime": datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S"),
             "TotalRuntimePriorDays": None,
             "AverageRuntimePriorDays": None,
@@ -128,8 +49,8 @@ class PowerSchedulerState:
             "ForecastRuntimeToday": None,
             "IsDeviceRunning": None,
             "DeviceLastStartTime": None,
-            "DeviceType": config["DeviceType"]["Type"],
-            "DeviceName": config["DeviceType"]["Label"],
+            "DeviceType": self.config.get("DeviceType", "Type"),
+            "DeviceName": self.config.get("DeviceType", "Label"),
             "LastStatusMessage": None,
             "CurrentPrice": None,
             "PriceTime": None,
@@ -161,7 +82,7 @@ class PowerSchedulerState:
             daily_data = {
                 "ID": i,
                 "Date": date_today.strftime("%Y-%m-%d"),  # Format the date as a string
-                "RequiredDailyRuntime": SystemConfiguration.get_target_hours(date_today),
+                "RequiredDailyRuntime": self.helper.get_target_hours(date_today),
                 "PriorShortfall": 0,
                 "TargetRuntime": None,
                 "RuntimeToday": None,
@@ -182,7 +103,7 @@ class PowerSchedulerState:
                     start_time += timedelta(hours=random.randint(0, 5), minutes=random.randint(0, 40))
 
                 # Make each run last for a num_runs fraction of the target hours for that day less a random shortfall
-                run_duration = SystemConfiguration.get_target_hours(date_today) / num_runs
+                run_duration = self.helper.get_target_hours(date_today) / num_runs
                 if RANDOMISE_DURATIONS:
                     watts_per_hour = random.randint(1000, 2000)
                 else:
@@ -220,29 +141,29 @@ class PowerSchedulerState:
             self.set_daily_data(day["ID"], day_data=day)
 
         # Override values set in config file
-        self.state["MaxDailyRuntimeAllowed"] = config["DeviceRunScheule"]["MaximumRunHoursPerDay"]
-        self.state["DeviceType"] = config["DeviceType"]["Type"]
-        self.state["DeviceName"] = config["DeviceType"]["Label"]
+        self.state["MaxDailyRuntimeAllowed"] = self.config.get("DeviceRunScheule", "MaximumRunHoursPerDay")
+        self.state["DeviceType"] = self.config.get("DeviceType", "Type")
+        self.state["DeviceName"] = self.config.get("DeviceType", "Label")
         self.state["LastStatusMessage"] = None
 
         # See if we need to skip today
         self.skip_run_today = False
-        if SystemConfiguration.is_no_run_today():
-            write_log_message(f"{self.state['DeviceName']} is not scheduled to run today.", "summary")
+        if self.helper.is_no_run_today():
+            self.logger.log_message(f"{self.state['DeviceName']} is not scheduled to run today.", "summary")
             self.skip_run_today = True
 
     def load_state(self):
         """Load the current state from the JSON file."""
-        file_path = SystemConfiguration.select_file_location(config["Files"]["SavedStateFile"])
-        if Path(file_path).exists():
+        file_path = self.config.select_file_location(self.config.get("Files", "SavedStateFile"))
+        if file_path.exists():
 
             try:
-                with Path(file_path).open(encoding="utf-8") as file:
+                with file_path.open(encoding="utf-8") as file:
                     file_state = json.load(file)
-                    self.state = merge_configs(self.default_state, file_state)
-                    write_log_message(f"Successfully loaded state from {file_path}.", "debug")
+                    self.state = self.helper.merge_configs(self.default_state, file_state)
+                    self.logger.log_message(f"Successfully loaded state from {file_path}.", "debug")
             except json.JSONDecodeError as e:
-                report_fatal_error(f"Error decoding JSON from {file_path}: {e}")
+                self.logger.log_fatal_error(f"Error decoding JSON from {file_path}: {e}")
 
         else:
             self.state = self.default_state
@@ -251,19 +172,19 @@ class PowerSchedulerState:
         """Save state to file."""
         local_tz = datetime.now().astimezone().tzinfo
 
-        file_path = SystemConfiguration.select_file_location(config["Files"]["SavedStateFile"])
-        write_log_message(f"PowerSchedulerState.save_state() Saving state to {file_path}", "debug")
+        file_path = self.config.select_file_location(self.config.get("Files", "SavedStateFile"))
+        self.logger.log_message(f"PowerSchedulerState.save_state() Saving state to {file_path}", "debug")
         self.state["LastStateSaveTime"] = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
 
-        with Path(file_path).open("w", encoding="utf-8") as file:
+        with file_path.open("w", encoding="utf-8") as file:
             json.dump(self.state, file, indent=4)
 
         # Now if the WebsiteBaseURL hasbeen set, save the state to the web server
-        if config["DeviceType"]["WebsiteBaseURL"] is not None:
-            api_url = config["DeviceType"]["WebsiteBaseURL"] + "/api/submit"
+        if self.config.get("DeviceType", "WebsiteBaseURL") is not None:
+            api_url = self.config.get("DeviceType", "WebsiteBaseURL") + "/api/submit"
 
-            if config["DeviceType"]["WebsiteAccessKey"] is not None:
-                access_key= config["DeviceType"]["WebsiteAccessKey"]
+            if self.config.get("DeviceType", "WebsiteAccessKey") is not None:
+                access_key = self.config.get("DeviceType", "WebsiteAccessKey")
                 api_url += f"?key={access_key}"  # Add access_key as a query parameter
 
             headers = {
@@ -274,16 +195,16 @@ class PowerSchedulerState:
             try:
                 response = requests.post(api_url, headers=headers, json=json_object, timeout=GENERAL_API_TIMEOUT)
                 response.raise_for_status()
-                write_log_message(f"Posted PowerSchedulerState to {api_url}", "debug")
+                self.logger.log_message(f"Posted PowerSchedulerState to {api_url}", "debug")
             except requests.exceptions.HTTPError as e:
                 if response.status_code == HTTP_STATUS_FORBIDDEN:  # Handle 403 Forbidden error
-                    write_log_message(f"Access denied ({HTTP_STATUS_FORBIDDEN} Forbidden) when posting to {api_url}. Check your access key or permissions.", "error")
+                    self.logger.log_message(f"Access denied ({HTTP_STATUS_FORBIDDEN} Forbidden) when posting to {api_url}. Check your access key or permissions.", "error")
                 else:
-                    write_log_message(f"HTTP error saving state to web server at {api_url}: {e}", "warning")
+                    self.logger.log_message(f"HTTP error saving state to web server at {api_url}: {e}", "warning")
             except requests.exceptions.ConnectionError as e:  # Trap connection error - ConnectionError
-                write_log_message(f"Web server at {api_url} is unavailable. Error was: {e}", "warning")
+                self.logger.log_message(f"Web server at {api_url} is unavailable. Error was: {e}", "warning")
             except requests.exceptions.RequestException as e:
-                report_fatal_error(f"Error saving state to web server at {api_url}: {e}")
+                self.logger.log_fatal_error(f"Error saving state to web server at {api_url}: {e}")
 
     def get_daily_data(self, day_number):
         """
@@ -300,7 +221,7 @@ class PowerSchedulerState:
         local_tz = datetime.now().astimezone().tzinfo
 
         if day_number < 0 or day_number > 7:
-            report_fatal_error(f"Invalid day_number of {day_number} passed.")
+            self.logger.log_fatal_error(f"Invalid day_number of {day_number} passed.")
 
         # Set the DailyData element using the passed dict. If that's none, set to default values.
         date_today = datetime.now(local_tz) + timedelta(days=-day_number)  # Offset the date by i days
@@ -309,7 +230,7 @@ class PowerSchedulerState:
             today_data = {
                 "ID": day_number,
                 "Date": date_today.strftime("%Y-%m-%d"),  # Format the date as a string
-                "RequiredDailyRuntime": SystemConfiguration.get_target_hours(date_today),
+                "RequiredDailyRuntime": self.helper.get_target_hours(date_today),
                 "PriorShortfall": 0,
                 "TargetRuntime": None,
                 "RuntimeToday": 0,
@@ -327,7 +248,7 @@ class PowerSchedulerState:
             self.state["DailyData"][day_number]["ID"] = day_number
 
             # make sure the RequiredDailyRuntime is correct
-            self.state["DailyData"][day_number]["RequiredDailyRuntime"] = SystemConfiguration.get_target_hours(date_today)
+            self.state["DailyData"][day_number]["RequiredDailyRuntime"] = self.helper.get_target_hours(date_today)
 
         return True
 
@@ -362,7 +283,7 @@ class PowerSchedulerState:
                     else:
                         last_run["EnergyUsedForRun"] = device_state["EnergyUsed"] - last_run["EnergyUsedStart"]
                         last_run["Cost"] = (last_run["EnergyUsedForRun"] or 0) * (last_run["Price"] or 0) / 1000
-                    write_log_message(f"Updated DailyData[{day['ID']}].DeviceRuns[{last_run['ID']}] with end time {last_run['EndTime']}.", "debug")
+                    self.logger.log_message(f"Updated DailyData[{day['ID']}].DeviceRuns[{last_run['ID']}] with end time {last_run['EndTime']}.", "debug")
 
         # Loop through all the DeviceRuns[] except the last one and see if we need to recalculate the energy used
         todays_data = self.state["DailyData"][0]["DeviceRuns"]
@@ -439,7 +360,7 @@ class PowerSchedulerState:
         local_tz = datetime.now().astimezone().tzinfo
 
         if self.state["DailyData"][0]["Date"] != datetime.now(local_tz).strftime("%Y-%m-%d"):
-            report_fatal_error("called when DailyData[0] was not today")
+            self.logger.log_fatal_error("called when DailyData[0] was not today")
 
         # Current date and time
         now = datetime.now(local_tz)
@@ -483,15 +404,15 @@ class PowerSchedulerState:
             if self.skip_run_today:
                 # We're scheduled to skip today, so set the target runtime to 0
                 day_data["TargetRuntime"] = 0
-            elif config["DeviceType"]["Type"] == "HotWaterSystem":
+            elif self.config.get("DeviceType", "Type") == "HotWaterSystem":
                 day_data["TargetRuntime"] = day_data["RequiredDailyRuntime"]
             else:
                 day_data["TargetRuntime"] = day_data["RequiredDailyRuntime"] + day_data["PriorShortfall"]
-                day_data["TargetRuntime"] = max(day_data["TargetRuntime"], config["DeviceRunScheule"]["MinimumRunHoursPerDay"])
-                day_data["TargetRuntime"] = min(day_data["TargetRuntime"], config["DeviceRunScheule"]["MaximumRunHoursPerDay"])
+                day_data["TargetRuntime"] = max(day_data["TargetRuntime"], self.config.get("DeviceRunScheule", "MinimumRunHoursPerDay"))
+                day_data["TargetRuntime"] = min(day_data["TargetRuntime"], self.config.get("DeviceRunScheule", "MaximumRunHoursPerDay"))
 
             # Calculate running_shortfall to be used for the next day
-            if config["DeviceType"]["Type"] == "PoolPump":
+            if self.config.get("DeviceType", "Type") == "PoolPump":
                 running_shortfall += day_data["RequiredDailyRuntime"] - day_data["RuntimeToday"]
 
             # And the global running totals
@@ -552,7 +473,7 @@ class PowerSchedulerState:
         if daily_data["Date"] == current_date:
             return False
 
-        write_log_message("PowerSchedulerState.check_day_rollover(): New day detected, rolling data over to prior days.", "debug")
+        self.logger.log_message("PowerSchedulerState.check_day_rollover(): New day detected, rolling data over to prior days.", "debug")
 
         #First increment the EarlierTotals for the oldest date that we're loosing
         self.state["EarlierTotals"]["EnergyUsed"] += self.state["DailyData"][7]["EnergyUsed"]
@@ -576,17 +497,17 @@ class PowerSchedulerState:
         # Get the daily data for yesterday
         yesterday_data = self.get_daily_data(1)
         if yesterday_data is None:
-            write_log_message("PowerSchedulerState.check_yesterday_energy_usage(): No data for yesterday.", "warning")
+            self.logger.log_message("PowerSchedulerState.check_yesterday_energy_usage(): No data for yesterday.", "warning")
             return
 
         # Check if the energy used was less than expected
-        threashold = config["Email"]["DailyEnergyUseThreshold"] or 0
+        threashold = self.config.get("Email", "DailyEnergyUseThreshold") or 0
         if threashold > 0 and yesterday_data["EnergyUsed"] > threashold:
             warning_msg = f"{self.state['DeviceName']} energy used on {yesterday_data['Date']} was {yesterday_data['EnergyUsed']:.0f} watts, which exceeded the expected limit of {threashold}."
-            write_log_message(warning_msg, "warning")
+            self.logger.log_message(warning_msg, "warning")
 
             # Send an email notification if configured
-            send_email("Energy Usage Alert", warning_msg)
+            self.logger.send_email("Energy Usage Alert", warning_msg)
 
     def set_current_price(self, price):
         """Sets the current price in the state dictionary."""
@@ -607,12 +528,15 @@ class PowerSchedulerState:
 class PriceData:
     """Class to manage the Amber price data for the device scheduler."""
 
-    def __init__(self):
+    def __init__(self, config, logger):
         """
         Initialise the PriceData class.
 
         Gets the Amber price data and builds the array of prices.
         """
+        self.config = config
+        self.logger = logger
+
         # Get the Amber site ID.
         self.site_id = self.get_site_id()
 
@@ -630,61 +554,61 @@ class PriceData:
         """Fetches the site ID from the Amber API."""
         headers = {
             "accept": "application/json",
-            "Authorization": f"Bearer {config['AmberAPI']['APIKey']}",
+            "Authorization": f"Bearer {self.config.get('AmberAPI', 'APIKey')}",
         }
         try:
-            url = config["AmberAPI"]["BaseUrl"] + "/sites"
-            write_log_message(f"Getting Amber site ID using API call: {url}", "debug")
+            url = self.config.get("AmberAPI", "BaseUrl") + "/sites"
+            self.logger.log_message(f"Getting Amber site ID using API call: {url}", "debug")
 
-            response = requests.get(f"{url}", headers=headers, timeout=config["AmberAPI"]["Timeout"])
+            response = requests.get(f"{url}", headers=headers, timeout=self.config.get("AmberAPI", "Timeout"))
             response.raise_for_status()
             sites = response.json()
             for site in sites:
                 if site.get("status") == "active":
                     return site.get("id")
 
-            write_log_message("No active sites found.", "error")
+            self.logger.log_message("No active sites found.", "error")
             return None
         except requests.exceptions.ConnectionError as e:  # Trap connection error - ConnectionError
-            report_fatal_error(f"Connection error fetching Amber site ID at {url}: {e}")
+            self.logger.log_fatal_error(f"Connection error fetching Amber site ID at {url}: {e}")
 
         except requests.exceptions.Timeout as e:  # Trap connection timeout error - ConnectTimeoutError
-            report_fatal_error(f"API timeout error fetching Amber site ID at {url}: {e}")
+            self.logger.log_fatal_error(f"API timeout error fetching Amber site ID at {url}: {e}")
 
         except requests.exceptions.RequestException as e:
-            report_fatal_error(f"Error fetching Amber site ID: {e}")
+            self.logger.log_fatal_error(f"Error fetching Amber site ID: {e}")
         else:
             return None
 
     def get_prices(self):
         """Fetches the price forecast and saves the full JSON response."""
         if not self.site_id:
-            write_log_message("No site Amber ID available. Cannot fetch prices.", "error")
+            self.logger.log_message("No site Amber ID available. Cannot fetch prices.", "error")
             return None
 
-        write_log_message("Downloading Amber prices for next 24 hours.", "summary")
+        self.logger.log_message("Downloading Amber prices for next 24 hours.", "summary")
 
         headers = {
             "accept": "application/json",
-            "Authorization": f"Bearer {config['AmberAPI']['APIKey']}",
+            "Authorization": f"Bearer {self.config.get('AmberAPI', 'APIKey')}",
         }
-        url = f"{config['AmberAPI']['BaseUrl']}/sites/{self.site_id}/prices/current?next=47&previous=0&resolution=30"
+        url = f"{self.config.get('AmberAPI', 'BaseUrl')}/sites/{self.site_id}/prices/current?next=47&previous=0&resolution=30"
 
-        write_log_message(f"Getting Amber prices using API call: {url}", "debug")
+        self.logger.log_message(f"Getting Amber prices using API call: {url}", "debug")
 
         try:
-            response = requests.get(url, headers=headers, timeout=config["AmberAPI"]["Timeout"])
+            response = requests.get(url, headers=headers, timeout=self.config.get("AmberAPI", "Timeout"))
             response.raise_for_status()
             price_data = response.json()
 
         except requests.exceptions.ConnectionError as e:  # Trap connection error - ConnectionError
-            report_fatal_error(f"Connection error fetching Amber prices at {url}: {e}")
+            self.logger.log_fatal_error(f"Connection error fetching Amber prices at {url}: {e}")
 
         except requests.exceptions.Timeout as e:  # Trap connection timeout error - ConnectTimeoutError
-            report_fatal_error(f"API timeout error fetching Amber prices at {url}: {e}")
+            self.logger.log_fatal_error(f"API timeout error fetching Amber prices at {url}: {e}")
 
         except requests.exceptions.RequestException as e:
-            report_fatal_error(f"Error fetching Amber prices: {e}")
+            self.logger.log_fatal_error(f"Error fetching Amber prices: {e}")
 
         # Add local time entries to the returned dict
         enhanced_data = []
@@ -699,11 +623,11 @@ class PriceData:
 
             enhanced_data.append(new_entry)
 
-        if config["Files"]["LatestPriceData"] is not None:
-            lastest_price_data_path = SystemConfiguration.select_file_location(config["Files"]["LatestPriceData"])
-            write_log_message(f"Saving latest price data to {lastest_price_data_path}", "detailed")
+        if self.config.get("Files", "LatestPriceData") is not None:
+            lastest_price_data_path = self.config.select_file_location(self.config.get("Files", "LatestPriceData"))
+            self.logger.log_message(f"Saving latest price data to {lastest_price_data_path}", "detailed")
 
-            with Path(lastest_price_data_path).open("w", encoding="utf-8") as json_file:
+            with lastest_price_data_path.open("w", encoding="utf-8") as json_file:
                 json.dump(enhanced_data, json_file, indent=4)
 
         return enhanced_data
@@ -721,7 +645,7 @@ class PriceData:
             # If we've moved into the next day, break
             entry_start_time = datetime.strptime(amber_entry["localStartTime"], "%Y-%m-%dT%H:%M:%S").astimezone(local_tz)
             # If the entry is for today and is the required channel, add it to the list
-            if entry_start_time.date() == datetime.now(local_tz).date() and amber_entry.get("channelType") == config["AmberAPI"]["Channel"]:
+            if entry_start_time.date() == datetime.now(local_tz).date() and amber_entry.get("channelType") == self.config.get("AmberAPI", "Channel"):
                 price_entry = {
                     "Slot": slot,
                     "StartTime": amber_entry["localStartTime"].replace("T", " "),
@@ -735,9 +659,9 @@ class PriceData:
                 slot += 1
 
         if len(return_prices) == 0:
-            report_fatal_error(f"No Amber prices found for the {config['AmberAPI']['Channel']} channel.")
+            self.logger.log_fatal_error(f"No Amber prices found for the {self.config.get('AmberAPI', 'Channel')} channel.")
 
-        write_log_message(f"{len(return_prices)} prices fetched successfully.", "debug")
+        self.logger.log_message(f"{len(return_prices)} prices fetched successfully.", "debug")
 
         return return_prices
 
@@ -770,13 +694,14 @@ class PriceData:
 class PowerScheduler:
     """Class to manage the device scheduling based on electricity prices."""
 
-    def __init__(self):
+    def __init__(self, config, logger):
         """Initialise the PowerScheduler class."""
+        self.config = config
+        self.logger = logger
         local_tz = datetime.now().astimezone().tzinfo
-        initialise_monitoring_logfile()
 
         # Create an instance of the PowerScheduleState dictionary and load the prior state from file
-        self.state = PowerSchedulerState()
+        self.state = PowerSchedulerState(config, logger)
         self.switch = None
 
         # Log a warning it it's been more than 30 mins since the last state save
@@ -786,10 +711,10 @@ class PowerScheduler:
             now = datetime.now(local_tz)
             time_diff = now - last_state_save_time
             if time_diff.total_seconds() > 1800:
-                write_log_message(f"{self.state['DeviceName']} last run time was {time_diff.total_seconds() / 3600:.1f} hours ago. This is too long - please run at least every 30 minutes.", "warning")
+                self.logger.log_message(f"{self.state['DeviceName']} last run time was {time_diff.total_seconds() / 3600:.1f} hours ago. This is too long - please run at least every 30 minutes.", "warning")
 
         # Create an instance of the PriceData class and get the latest prices for the remainder of today
-        self.price_data = PriceData()
+        self.price_data = PriceData(config, logger)
 
         # Save latest price
         current_price = self.price_data.get_current_price()
@@ -828,7 +753,7 @@ class PowerScheduler:
 
             # Save the status message
             self.state["LastStatusMessage"] = status_message
-            write_log_message(status_message, "summary")
+            self.logger.log_message(status_message, "summary")
 
             # Write the run log to file if needed
             if not self.switch.switch_online:
@@ -854,13 +779,13 @@ class PowerScheduler:
         selected_slots = 0
         for idx in range(required_slots):
             # Only select the price if its less than the maximum price
-            if self.price_data.prices_sorted[idx]["Price"] <= config["DeviceRunScheule"]["MaximumPriceToRun"]:
+            if self.price_data.prices_sorted[idx]["Price"] <= self.config.get("DeviceRunScheule", "MaximumPriceToRun"):
                 self.price_data.prices_sorted[idx]["Selected"] = True
                 slot = self.price_data.prices_sorted[idx]["Slot"]
                 self.price_data.prices[slot]["Selected"] = True
                 selected_slots += 1
             else:
-                write_log_message(f"Price {self.price_data.prices_sorted[idx]['Price']:.1f} c/kWh for {self.price_data.prices_sorted[idx]['StartTime']} exceeds maximum price of {config['DeviceRunScheule']['MaximumPriceToRun']} c/kWh. We were only able to pick {selected_slots} of the {required_slots} required slots", "detailed")
+                self.logger.log_message(f"Price {self.price_data.prices_sorted[idx]['Price']:.1f} c/kWh for {self.price_data.prices_sorted[idx]['StartTime']} exceeds maximum price of {self.config.get('DeviceRunScheule', 'MaximumPriceToRun')} c/kWh. We were only able to pick {selected_slots} of the {required_slots} required slots", "detailed")
                 break
 
         # Make note of the maximum runtime left today based on selected slots
@@ -900,16 +825,16 @@ class PowerScheduler:
             # less than the most expensice price in our chosen slots (raised by the threashold factor),
             # then run the device
             today_runtime = self.state["DailyData"][0]["RuntimeToday"]
-            min_hours = config["DeviceRunScheule"]["MinimumRunHoursPerDay"]
-            excess_threashold = config["DeviceRunScheule"]["ThresholdAboveCheapestPricesForMinumumHours"]
+            min_hours = self.config.get("DeviceRunScheule", "MinimumRunHoursPerDay")
+            excess_threashold = self.config.get("DeviceRunScheule", "ThresholdAboveCheapestPricesForMinumumHours")
             if today_runtime < min_hours and current_price < worst_price * excess_threashold:
                 run_device = True
                 reason_why_message = (f"we haven't run the device for at least {min_hours} hours today and the"
                                         f" current price is less than the most expensive price in our chosen"
                                         f" slots plus {round((excess_threashold - 1), 2) * 100:.0f}%")
 
-            if config["DeviceType"]["Type"] == "PoolPump":
-                max_hours = config["DeviceRunScheule"]["MaximumRunHoursPerDay"]
+            if self.config.get("DeviceType", "Type") == "PoolPump":
+                max_hours = self.config.get("DeviceRunScheule", "MaximumRunHoursPerDay")
                 if today_runtime >= max_hours:
                     if run_device:
                         override_message = f"maximum daily runtime of {max_hours} hours reached."
@@ -994,10 +919,10 @@ class PowerScheduler:
         if device_run_plan_msg != "":
             final_message += f" {self.state['DeviceName']} run plan:\n{device_run_plan_msg}"
 
-        write_log_message(final_message, "summary")
-        if config["Email"]["SendSummary"]:
+        self.logger.log_message(final_message, "summary")
+        if self.config.get("Email", "SendSummary"):
             subject = f"{self.state['DeviceName']} scheduler Summary for {datetime.now(local_tz).strftime('%Y-%m-%d %H:%M')}"
-            send_email(subject, final_message)
+            self.logger.send_email(subject, final_message)
 
         # Write the run log to file if needed
         device_state = None if not self.switch.switch_online else run_device
@@ -1006,11 +931,11 @@ class PowerScheduler:
     def write_csv_runlog(self, required_slots, amber_price, forecast_price, should_run):
         """Initialise the run log file. If it exists, truncate it to the max number of lines."""
         local_tz = datetime.now().astimezone().tzinfo
-        if config["Files"]["RunLogFile"] is None:
-            write_log_message("No log file specified. Run log will not be saved.", "debug")
+        if self.config.get("Files", "RunLogFile") is None:
+            self.logger.log_message("No log file specified. Run log will not be saved.", "debug")
             return
 
-        file_path = SystemConfiguration.select_file_location(config["Files"]["RunLogFile"])
+        file_path = self.config.select_file_location(self.config.get("Files", "RunLogFile"))
         switch_state = ""
         if should_run is None:
             switch_state = "Unavailable"
@@ -1019,54 +944,54 @@ class PowerScheduler:
         elif not should_run:
             switch_state = "Off"
 
-        if Path(file_path).exists():
+        if file_path.exists():
             # CSV log file exists - truncate excess lines if needed
-            with Path(file_path).open(newline="", encoding="utf-8") as file:
-                max_lines = config["Files"]["RunLogFileMaxLines"]
+            with file_path.open(newline="", encoding="utf-8") as file:
+                max_lines = self.config.get("Files", "RunLogFileMaxLines")
 
                 if max_lines > 0:
                     reader = list(csv.reader(file))
 
                     # Ensure there are more than max_lines lines (including header)
                     if len(reader) > max_lines + 1:
-                        write_log_message(f"Trimming excess lines from {file_path}.", "debug")
+                        self.logger.log_message(f"Trimming excess lines from {file_path}.", "debug")
                         header = reader[0]  # Preserve header
                         data = reader[-max_lines:]  # Keep the last max_lines rows
 
                         # Rewrite the file with the trimmed content
-                        with Path(file_path).open("w", newline="", encoding="utf-8") as file2:
+                        with file_path.open("w", newline="", encoding="utf-8") as file2:
                             writer = csv.writer(file2)
                             writer.writerow(header)  # Write header back
                             writer.writerows(data)  # Write last max_lines rows
         else:
             # CSV log file doesn't exist - create one with the header.
-            with Path(file_path).open(mode="w", newline="", encoding="utf-8") as file:
+            with file_path.open(mode="w", newline="", encoding="utf-8") as file:
                 writer = csv.writer(file)
                 writer.writerow(["CurrentTime", "RequiredSlots", "CurrentPrice", "AverageForecastPrice", "switch_state" ])
 
-                write_log_message(f"Created new run log file at {file_path}.", "detailed")
+                self.logger.log_message(f"Created new run log file at {file_path}.", "detailed")
 
 
         # Finally, write the run log to file if needed
-        with Path(file_path).open(mode="a", newline="", encoding="utf-8") as file:
+        with file_path.open(mode="a", newline="", encoding="utf-8") as file:
             csv.writer(file).writerow([datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S"), required_slots,  round(amber_price, 2), round(forecast_price, 2), switch_state])
 
     def validate_device_state(self, device_state):
         """Validate the device state object."""
         local_tz = datetime.now().astimezone().tzinfo
         if device_state is None:
-            report_fatal_error("called with None value")
+            self.logger.log_fatal_error("called with None value")
 
         if device_state["Enabled"] != self.state["IsDeviceRunning"]:
-            write_log_message(f"{self.state['DeviceName']} switch has been changed externally since the PowerController last stated. Switch on: {device_state['Enabled']} but we last set the switch to {self.state['IsDeviceRunning']}", "warning")
+            self.logger.log_message(f"{self.state['DeviceName']} switch has been changed externally since the PowerController last stated. Switch on: {device_state['Enabled']} but we last set the switch to {self.state['IsDeviceRunning']}", "warning")
 
         # Check to see how long the pool device has been running for
-        if self.state["IsDeviceRunning"] and config["DeviceType"]["Type"] == "PoolPump":
+        if self.state["IsDeviceRunning"] and self.config.get("DeviceType", "Type") == "PoolPump":
             start_time = datetime.strptime(self.state["DeviceLastStartTime"], "%Y-%m-%d %H:%M:%S").astimezone(local_tz)
-            max_hours = config["DeviceRunScheule"]["MaximumRunHoursPerDay"]
+            max_hours = self.config.get("DeviceRunScheule", "MaximumRunHoursPerDay")
             running_hours = (datetime.now(local_tz) - start_time).total_seconds() / 3600
             if running_hours > max_hours:
-                write_log_message(f"{self.state['DeviceName']} appears to have been running for {running_hours:.1f} hours, more than maximum of {max_hours} hours. This should never happen. ", "error")
+                self.logger.log_message(f"{self.state['DeviceName']} appears to have been running for {running_hours:.1f} hours, more than maximum of {max_hours} hours. This should never happen. ", "error")
 
                 # Reset the start time so that we don't get this error every time
                 self.state["DeviceLastStartTime"] = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
@@ -1081,22 +1006,22 @@ class PowerScheduler:
 
         # old_device_state and new_device_state are instances of ShellySwitchState
         if old_device_state is None or new_device_state is None:
-            write_log_message(f"Starting {function_name} - switch is currently offline - updating system status.", "debug")
+            self.logger.log_message(f"Starting {function_name} - switch is currently offline - updating system status.", "debug")
             self.state["IsDeviceRunning"] = False
             self.state["DeviceLastStartTime"] = None
         else:
             # Should never be called if the device run is open
             if self.state.is_device_run_open():
-                report_fatal_error("called with an open device run.")
+                self.logger.log_fatal_error("called with an open device run.")
 
             # Record the device being turned on or turned off
-            write_log_message(f"Starting {function_name} - prior state: {old_device_state['SwitchStateStr']} new state: {new_device_state['SwitchStateStr']}.", "debug")
+            self.logger.log_message(f"Starting {function_name} - prior state: {old_device_state['SwitchStateStr']} new state: {new_device_state['SwitchStateStr']}.", "debug")
 
             # If the device is running, add a new run entry
             if new_device_state["Enabled"]:
                 run_num = len(self.state["DailyData"][0]["DeviceRuns"])
                 if not old_device_state["Enabled"]:
-                    write_log_message(f"Turning the {self.state['DeviceName']} on, starting run {run_num + 1}.", "summary")
+                    self.logger.log_message(f"Turning the {self.state['DeviceName']} on, starting run {run_num + 1}.", "summary")
 
                 run_item = {
                     "ID": len(self.state["DailyData"][0]["DeviceRuns"]),
@@ -1117,30 +1042,53 @@ class PowerScheduler:
             else:
                 run_num = len(self.state["DailyData"][0]["DeviceRuns"])
                 if old_device_state["Enabled"]:
-                    write_log_message(f"Turning the {self.state['DeviceName']} off, closing out run {run_num}.", "summary")
+                    self.logger.log_message(f"Turning the {self.state['DeviceName']} off, closing out run {run_num}.", "summary")
 
                 self.state["IsDeviceRunning"] = False
                 self.state["DeviceLastStartTime"] = None
         self.state.save_state()
 
 
-if __name__ == "__main__":
-    this_device_label = config["DeviceType"]["Label"]
+def main():
+    # Get our default schema, validation schema, and placeholders
+    schemas = ConfigSchema()
 
-    register_logger(write_log_message)        # Register the logger function
-    register_configurator(SystemConfiguration)        # Register the config settings
+    # Initialize the SC_ConfigManager class
+    try:
+        config = SCConfigManager(
+            config_file=CONFIG_FILE,
+            default_config=schemas.default,  # Replace with your default config if needed
+            validation_schema=schemas.validation,  # Replace with your validation schema if needed
+            placeholders=schemas.placeholders  # Replace with your placeholders if needed
+        )
+    except RuntimeError as e:
+        print(f"Configuration file error: {e}", file=sys.stderr)
+        return
 
-    write_log_message("", "summary")
-    write_log_message(f"{this_device_label} starting...", "summary")
+    # Initialize the SC_Logger class
+    try:
+        logger = SCLogger(config.get_logger_settings())
+    except RuntimeError as e:
+        print(f"Logger initialisation error: {e}", file=sys.stderr)
+        return
+
+    # Setup email
+    logger.register_email_settings(config.get_email_settings())
+
+    # Log startup message
+    this_device_label = config.get("DeviceType", "Label")
+    logger.log_message("", "summary")
+    logger.log_message(f"{this_device_label} starting...", "summary")
+
     scheduler = None
 
     try:
         # Create an instance of the PowerScheduler which will include the PowerSchedulerState
         # and also download the latest Amber prices for the rest of the day
-        scheduler = PowerScheduler()
+        scheduler = PowerScheduler(config, logger)
 
         # Create an instance of the ShellySwitch class
-        smart_switch = ShellySwitch()
+        smart_switch = ShellySwitch(config, logger)
 
         # Register the switch with the scheduler
         scheduler.register_switch(smart_switch)
@@ -1150,8 +1098,8 @@ if __name__ == "__main__":
 
         #Make sure the switch is in the correct state
         if current_switch_status is not None and not scheduler.validate_device_state(current_switch_status):
-            CRITICAL_ERROR = f"device appears to have been running for more than {config['DeviceRunScheule']['MaximumRunHoursPerDay']} hours. This should never happen. See log file for details."
-            send_email("PowerController device was running for too long", CRITICAL_ERROR)
+            critical_error = f"device appears to have been running for more than {config.get('DeviceRunScheule', 'MaximumRunHoursPerDay')} hours. This should never happen. See log file for details."
+            logger.send_email("PowerController device was running for too long", critical_error)
 
         # Close out any open device runs and update the state
         scheduler.state.consolidate_device_run_data(current_switch_status)
@@ -1178,13 +1126,18 @@ if __name__ == "__main__":
         scheduler.log_device_state(current_switch_status, new_switch_status)
 
         # If the prior run fails, send email that this run worked OK
-        if fatal_error_tracking("get"):
-            write_log_message(f"{this_device_label} run was successful after a prior failure.", "summary")
-            send_email(f"{this_device_label} recovery", "PowerController run was successful after a prior failure.")
-            fatal_error_tracking("set")
+        if logger.get_fatal_error():
+            logger.log_message(f"{this_device_label} run was successful after a prior failure.", "summary")
+            logger.send_email(f"{this_device_label} recovery", "PowerController run was successful after a prior failure.")
+            logger.clear_fatal_error()
         sys.exit(0)
 
     # Handle any other untrapped exception
     except Exception as e:  # noqa: BLE001
         main_fatal_error = f"PowerController terminated unexpectedly due to unexpected error: {e}"
-        report_fatal_error(main_fatal_error, report_stack=True)
+        logger.log_fatal_error(main_fatal_error, report_stack=True)
+
+
+if __name__ == "__main__":
+    # Run the main function
+    main()

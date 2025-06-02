@@ -54,13 +54,13 @@ Files:
   # Optional name of a CSV to log the device state and current price to after each run
   RunLogFile: 
   RunLogFileMaxLines: 500
-  MonitoringLogFile: PowerController.log
-  MonitoringLogFileMaxLines: 5000
+  LogfileName: logfile.log
+  LogfileMaxLines: 5000
   # How much information do we write to the log file. One of: none; error; warning; summary; detailed; debug
-  LogFileVerbosity: detailed
+  LogfileVerbosity: debug
   # How much information do we write to the console. One of: error; warning; summary; detailed; debug
   ConsoleVerbosity: detailed
-  # Optional name of a json file that will contain a dump of the latest data returned from the Amber API
+  # How much information do we write to the log file. One of: none; error; warning; summary; detailed; debug
   LatestPriceData: 
 
 # Enter your settings here if you want to be emailed when there's a critical error 
