@@ -35,7 +35,7 @@ class ConfigSchema:
                 "SavedStateFile": "PowerControllerState.json",
                 "RunLogFile": "PowerControllerRun.csv",
                 "RunLogFileMaxLines": 480,
-                "LogfileName": "PowerController.log",
+                "LogfileName": "logfile.log",
                 "LogfileMaxLines": 5000,
                 "LogfileVerbosity": "summary",
                 "ConsoleVerbosity": "summary",

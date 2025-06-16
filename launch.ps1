@@ -1,9 +1,6 @@
 <#
 =======================================================
-Amber Power Controller
-
-Downloads Amber Electric prices for the next 24 hours and
-sets the pool pump to run during the cheapest periods.
+Application Launcher
 
 Requires Python and UV to be installed
 =======================================================

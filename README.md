@@ -20,13 +20,13 @@ Windows: `inget install python3 --source winget --scope machine`
 macOS: 'brew install uvicorn'
 Windows: ``pip install uv`
 
-The shell script used to run the PowerController (*PowerController.sh*) is uses the *uv sync* command to ensure that all the prerequitie Python packages are installed in the virtual environment.
+The shell script used to run the app (*launch.sh*) is uses the *uv sync* command to ensure that all the prerequitie Python packages are installed in the virtual environment.
 
 ## Running on Mac
 If you're running the Python script on macOS, you need to allow the calling application (Terminal, Visual Studio) to access devices on the local network: *System Settings > Privacy and Security > Local Network*
 
 # Configuration File 
-The script uses the *PowerControllerConfig.yaml* YAML file for configuration. An example of included with the project (*PowerControllerConfig.yaml.example*). Copy this to *PowerControllerConfig.yaml* before running the app for the first time.  Here's an example config file:
+The script uses the *config.yaml* YAML file for configuration. An example of included with the project (*config.yaml.example*). Copy this to *PowerControllerConfig.yaml* before running the app for the first time.  Here's an example config file:
 
     DeviceType:
         Type: PoolPump
@@ -65,9 +65,9 @@ The script uses the *PowerControllerConfig.yaml* YAML file for configuration. An
         SavedStateFile: PowerControllerState.json
         RunLogFile: PowerControllerRun.csv
         RunLogFileMaxLines: 500
-        MonitoringLogFile: PowerController.log
-        MonitoringLogFileMaxLines: 5000
-        LogFileVerbosity: detailed
+        Logfile: PowerController.log
+        LogfileMaxLines: 5000
+        LogfileVerbosity: detailed
         ConsoleVerbosity: summary
         LatestPriceData: LatestAmberPrices.json
 
@@ -129,10 +129,10 @@ The script uses the *PowerControllerConfig.yaml* YAML file for configuration. An
 | SavedStateFile | JSON file name to store the Power Controller's device current state and history. | 
 | RunLogFile | Records a single status record each time the Power Controller script is run. If entry this is blank, this file won't be created.| 
 | RunLogFileMaxLines | Maximum number of lines to keep in the RunLogFile. If zero, file will never be truncated. | 
-| MonitoringLogFile | A text log file that records progress messages and warnings. | 
-| MonitoringLogFileMaxLines| Maximum number of lines to keep in the MonitoringLogFileMaxLines. If zero, file will never be truncated. | 
-| LogFileVerbosity | The level of detail captured in the MonitoringLogFile. One of: <br>* none<br>* error<br>* warning<br>* summary<br>* detailed<br>* debug | 
-| ConsoleVerbosity | Controls the amount of information written to the console. One of: <br>* error<br>* warning<br>* summary<br>* detailed<br>* debug <br>Errors are written to stderr all other messages are written to stdout | 
+| Logfile | A text log file that records progress messages and warnings. | 
+| LogfileMaxLines| Maximum number of lines to keep in the log file. If zero, file will never be truncated. | 
+| LogfileVerbosity | The level of detail captured in the log file. One of: none; error; warning; summary; detailed; debug; all | 
+| ConsoleVerbosity | Controls the amount of information written to the console. One of: error; warning; summary; detailed; debug; all. Errors are written to stderr all other messages are written to stdout | 
 | LatestPriceData | JSON file name storing latest price data fetched from the API. | 
 
 ### Section: Email
@@ -151,7 +151,7 @@ The script uses the *PowerControllerConfig.yaml* YAML file for configuration. An
 
 # How It Works
 ## 1. Initialization:
-* Loads the configuration from *PowerControllerConfig.yaml*. If the configuration file is missing, it generates a default one.
+* Loads the configuration from *config.yaml*. If the configuration file is missing, it generates a default one.
 * Loads past runtime history from *PowerControllerState.json*.
 * Fetches your site ID via the Amber API.
 
@@ -181,7 +181,7 @@ The Power Controller is currently designed to physically start or stop the pool 
 # Running the Script
 Execute the Python script using:
 
-`PowerController.sh`
+`launch.sh`
 
 The script will fetch price data, determine the current time slot, decide whether to run the device, and log the action taken. If no valid price data is available, it will log an error.
 
@@ -201,7 +201,7 @@ The Power Controller will first look for these files in the current working dire
     * Average Forecast Price: The average price for all the 30 minute slots that the device will run for during the rest of the day.
     * Should Run: If TRUE, the device will be told to run until the next time this script is run.
     This name of this CSV is set via the RunLogFile configuration parameter.
-* PowerController.log: Progress messages and warnings are written to this file. The logging level is controlled by the LogFileVerbosity configuration parameter.
+* logfile.log: Progress messages and warnings are written to this file. The logging level is controlled by the LogfileVerbosity configuration parameter.
 * LatestAmberPrices.json: Stores the latest electricity price data fetched from Amber API.
 * PowerControllerState.json: Tracks past seven days of runtime and today's runtime.
 
