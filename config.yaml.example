@@ -5,10 +5,14 @@ DeviceType:
   #   PoolPump
   #   HotWaterSystem
   Type: PoolPump
+  # The Shelly smart switch to turn the pump on and off. Enter a name or ID that matches a ShellyDevices: Devices: Outputs section below.
+  Switch: "Pool Switch 1"
+  # The Shelly smart switch emeter to monitor energy use. Can be blank. Enter a name or ID that matches a ShellyDevices: Devices: Meters section below.
+  Meter: "Pool Meter 1"  
+  # The name for your device, used in the web app and logs
   Label: iMac Pool Pump
-  # Set this to the homepage URL of the PowerControllerUI web app. This URL is used to transfer 
-  # device status to the website.
-  WebsiteBaseURL: 
+  # Set this to the homepage URL of the PowerControllerUI web app. This URL is used to transfer device status to the website.
+  WebsiteBaseURL: http://127.0.0.1:8000
   WebsiteAccessKey: <Your website API key here>
 
 AmberAPI:
@@ -20,18 +24,30 @@ AmberAPI:
   Timeout: 15
 
 # Settings for the Shelly Plus smart switch, used switch power to your device
-ShellySmartSwitch:
-  # Set this to the type of Shelly switch device you are using to control the power controlling. One of:
-  # ShellyEM - Gen 1 Shelly energy meter with relay: https://www.shelly.com/products/shelly-em-50a-clamp-1
-  # ShellyPlus1PM - Gen 2 Shelly 1PM switch with meter (discontinued): https://www.shelly.com/products/shelly-plus-1pm
-  # Shelly1PMG3 - Gen 3 Shelly 1PM switch with meter: https://www.shelly.com/products/shelly-1pm-gen3
-  Model: ShellyEM
-  # Set this to the local IP address of your smart switch 
-  IPAddress: <Your Shelly switch IP address here>
-  SwitchID: 0
-  # Set to True when testing and you don't want to update the smart switch status 
-  DisableSwitch: True
-  Timeout: 5
+  ShellyDevices:
+    ResponseTimeout: 3
+    RetryCount: 1
+    RetryDelay: 2
+    PingAllowed: True
+    Devices:
+      - Name: Shelly Pool
+        Model: Shelly2PMG3
+        Hostname: 192.168.1.25
+        Simulate: False
+        Outputs:
+          - Name: "Pool Switch 1"
+          - Name: "Pool Switch 2"
+        Meters:
+          - Name: "Pool Meter 1"
+          - Name: "Pool Meter 2"
+      - Name: Mock Switch
+        Model: ShellyPlus1PM
+        Simulate: True
+        Outputs:
+            - Name: "Mock Switch 1"
+        Meters:
+            - Name: "Mock Meter 1" 
+
 
 # Your desired settings for the pump's runtime. See the documentation for details.
 # If the device type is HotWaterSystem then only the MaximumPriceToRun and 
@@ -42,18 +58,32 @@ DeviceRunScheule:
   TargetRunHoursPerDay: 7
   MaximumPriceToRun: 20
   ThresholdAboveCheapestPricesForMinumumHours: 1.1
-  # Optionally override the monthly target run hours per day
+  # The times of day when the device should run. This is used when the Amber pricing API is not available or you want o manually control the device.
+  # Set the manual schedule hours to be longer than your TargetRunHoursPerDay and app will automatically adjust the run time to match the TargetRunHoursPerDay.
+  # Specify the StartTime and EndTime in 24-hour format (HH:MM) - for example, "08:00" for 8 AM and "16:00" for 4 PM.
+  ManualSchedule:
+    - StartTime: "11:00"
+      EndTime: "16:00"
+    - StartTime: "20:00"
+      EndTime: "23:00"  # Optionally override the monthly target run hours per day
   MonthlyTargetRunHoursPerDay:
-
+    January: 8
+    February: 8
+    June: 6
+    July: 6
+    August: 6
+    December: 8
   # Specify date ranges when the device should not run
   NoRunPeriods:
+    - StartDate: "2025-09-01"
+      EndDate: "2025-09-20"
+    - StartDate: "2025-12-28"
+      EndDate: "2026-12-31"  
 
 Files:
   # The name of the saved state file. This is used to store the state of the device between runs.
-  SavedStateFile:  PowerControllerState.json
+  SavedStateFile:  system_state.json
   # Optional name of a CSV to log the device state and current price to after each run
-  RunLogFile: 
-  RunLogFileMaxLines: 500
   LogfileName: logfile.log
   LogfileMaxLines: 5000
   # How much information do we write to the log file. One of: none; error; warning; summary; detailed; debug
@@ -62,6 +92,10 @@ Files:
   ConsoleVerbosity: detailed
   # How much information do we write to the log file. One of: none; error; warning; summary; detailed; debug
   LatestPriceData: 
+  # Optionally save the daily run stats to a CSV file
+  DailyRunStatsCSV: daily_run_stats.csv
+  # Number of days to keep the daily run stats CSV file
+  DailyRunStatsDaysToKeep: 365
 
 # Enter your settings here if you want to be emailed when there's a critical error 
 Email:
@@ -74,3 +108,9 @@ Email:
   SMTPUsername: <Your SMTP username here>
   SMTPPassword: <Your SMTP password here>
   SubjectPrefix: 
+
+HeartbeatMonitor:
+  # Optionally, the URL of the website to monitor for availability
+  WebsiteURL: https://uptime.betterstack.com/api/v1/heartbeat/myheartbeatid
+  # How long to wait for a response from the website before considering it down in seconds
+  HeartbeatTimeout: 5  

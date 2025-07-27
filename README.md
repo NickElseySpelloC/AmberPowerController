@@ -26,59 +26,124 @@ The shell script used to run the app (*launch.sh*) is uses the *uv sync* command
 If you're running the Python script on macOS, you need to allow the calling application (Terminal, Visual Studio) to access devices on the local network: *System Settings > Privacy and Security > Local Network*
 
 # Configuration File 
-The script uses the *config.yaml* YAML file for configuration. An example of included with the project (*config.yaml.example*). Copy this to *PowerControllerConfig.yaml* before running the app for the first time.  Here's an example config file:
+The script uses the *config.yaml* YAML file for configuration. An example of included with the project (*config.yaml.example*). Copy this to *config.yaml* before running the app for the first time.  Here's an example config file:
 
-    DeviceType:
-        Type: PoolPump
-        Label: Pool Pump
-        WebsiteBaseURL: http://127.0.0.1:8000
+```yaml
+DeviceType:
+  # Set this to the type of device you are controlling. One of: 
+  #   PoolPump
+  #   HotWaterSystem
+  Type: PoolPump
+  # The Shelly smart switch to turn the pump on and off. Enter a name or ID that matches a ShellyDevices: Devices: Outputs section below.
+  Switch: "Pool Switch 1"
+  # The Shelly smart switch emeter to monitor energy use. Can be blank. Enter a name or ID that matches a ShellyDevices: Devices: Meters section below.
+  Meter: "Pool Meter 1"  
+  # The name for your device, used in the web app and logs
+  Label: iMac Pool Pump
+  # Set this to the homepage URL of the PowerControllerUI web app. This URL is used to transfer device status to the website.
+  WebsiteBaseURL: http://127.0.0.1:8000
+  WebsiteAccessKey: <Your website API key here>
 
-    AmberAPI:
-        APIKey: 123456789abc
-        BaseUrl: https://api.amber.com.au/v1
-        Channel: general
-        Timeout: 10
+AmberAPI:
+  # Set this to the API key for your account - get this at app.amber.com.au/developers/
+  APIKey: <Your Amber API key here>
+  BaseUrl: https://api.amber.com.au/v1
+  # Which channel do we get the price data for - one of general or controlledLoad
+  Channel: general
+  Timeout: 15
 
-    ShellySmartSwitch:
-        Model: Shelly1PMG3
-        IPAddress: 192.168.0.23
-        SwitchID: 0
-        DisableSwitch: False
-        Timeout: 10
+# Settings for the Shelly Plus smart switch, used switch power to your device
+  ShellyDevices:
+    ResponseTimeout: 3
+    RetryCount: 1
+    RetryDelay: 2
+    PingAllowed: True
+    Devices:
+      - Name: Shelly Pool
+        Model: Shelly2PMG3
+        Hostname: 192.168.1.25
+        Simulate: False
+        Outputs:
+          - Name: "Pool Switch 1"
+          - Name: "Pool Switch 2"
+        Meters:
+          - Name: "Pool Meter 1"
+          - Name: "Pool Meter 2"
+      - Name: Mock Switch
+        Model: ShellyPlus1PM
+        Simulate: True
+        Outputs:
+            - Name: "Mock Switch 1"
+        Meters:
+            - Name: "Mock Meter 1" 
 
-    DeviceRunScheule:
-        MinimumRunHoursPerDay: 3
-        MaximumRunHoursPerDay: 9
-        TargetRunHoursPerDay: 6
-        MaximumPriceToRun: 35
-        ThresholdAboveCheapestPricesForMinumumHours: 1.1
-        MonthlyTargetRunHoursPerDay:
-            January: 9
-            February: 9
-        NoRunPeriods:
-            - StartDate: "2025-05-07"
-            EndDate: "2025-10-01"
-            - StartDate: "2026-05-10"
-            EndDate: "2026-10-01"  
 
-    Files:
-        SavedStateFile: PowerControllerState.json
-        RunLogFile: PowerControllerRun.csv
-        RunLogFileMaxLines: 500
-        Logfile: PowerController.log
-        LogfileMaxLines: 5000
-        LogfileVerbosity: detailed
-        ConsoleVerbosity: summary
-        LatestPriceData: LatestAmberPrices.json
+# Your desired settings for the pump's runtime. See the documentation for details.
+# If the device type is HotWaterSystem then only the MaximumPriceToRun and 
+# ThresholdAboveCheapestPricesForMinumumHours parameters are used.
+DeviceRunScheule:
+  MinimumRunHoursPerDay: 2
+  MaximumRunHoursPerDay: 10
+  TargetRunHoursPerDay: 7
+  MaximumPriceToRun: 20
+  ThresholdAboveCheapestPricesForMinumumHours: 1.1
+  # The times of day when the device should run. This is used when the Amber pricing API is not available or you want o manually control the device.
+  # Set the manual schedule hours to be longer than your TargetRunHoursPerDay and app will automatically adjust the run time to match the TargetRunHoursPerDay.
+  # Specify the StartTime and EndTime in 24-hour format (HH:MM) - for example, "08:00" for 8 AM and "16:00" for 4 PM.
+  ManualSchedule:
+    - StartTime: "11:00"
+      EndTime: "16:00"
+    - StartTime: "20:00"
+      EndTime: "23:00"  # Optionally override the monthly target run hours per day
+  MonthlyTargetRunHoursPerDay:
+    January: 8
+    February: 8
+    June: 6
+    July: 6
+    August: 6
+    December: 8
+  # Specify date ranges when the device should not run
+  NoRunPeriods:
+    - StartDate: "2025-09-01"
+      EndDate: "2025-09-20"
+    - StartDate: "2025-12-28"
+      EndDate: "2026-12-31"  
 
-    Email:
-        EnableEmail: True
-        SendSummary: False
-        DailyEnergyUseThreshold: 5000
-        SMTPServer: smtp.gmail.com
-        SMTPPort: 587
-        SMTPUsername: me@gmail.com
-        SMTPPassword: <Your SMTP password>
+Files:
+  # The name of the saved state file. This is used to store the state of the device between runs.
+  SavedStateFile:  system_state.json
+  # Optional name of a CSV to log the device state and current price to after each run
+  LogfileName: logfile.log
+  LogfileMaxLines: 5000
+  # How much information do we write to the log file. One of: none; error; warning; summary; detailed; debug
+  LogfileVerbosity: debug
+  # How much information do we write to the console. One of: error; warning; summary; detailed; debug
+  ConsoleVerbosity: detailed
+  # How much information do we write to the log file. One of: none; error; warning; summary; detailed; debug
+  LatestPriceData: 
+  # Optionally save the daily run stats to a CSV file
+  DailyRunStatsCSV: daily_run_stats.csv
+  # Number of days to keep the daily run stats CSV file
+  DailyRunStatsDaysToKeep: 365
+
+# Enter your settings here if you want to be emailed when there's a critical error 
+Email:
+  EnableEmail: True
+  SendSummary: False
+  DailyEnergyUseThreshold: 6000
+  SendEmailsTo: <Your email address here>
+  SMTPServer: <Your SMTP server here>
+  SMTPPort: 587
+  SMTPUsername: <Your SMTP username here>
+  SMTPPassword: <Your SMTP password here>
+  SubjectPrefix: 
+
+HeartbeatMonitor:
+  # Optionally, the URL of the website to monitor for availability
+  WebsiteURL: https://uptime.betterstack.com/api/v1/heartbeat/myheartbeatid
+  # How long to wait for a response from the website before considering it down in seconds
+  HeartbeatTimeout: 5  
+```
 
 ## Configuration Parameters
 ### Section: DeviceType
@@ -86,6 +151,8 @@ The script uses the *config.yaml* YAML file for configuration. An example of inc
 | Parameter | Description | 
 |:--|:--|
 | Type | What type of device are we controlling. Must be one of: *PoolPump* or *HotWaterSystem* |
+| Switch | The Shelly smart switch to turn the pump on and off. Enter a name or ID that matches a ShellyDevices: Devices: Outputs section below. |
+| Meter | The Shelly smart switch emeter to monitor energy use. Can be blank. Enter a name or ID that matches a ShellyDevices: Devices: Meters section below. |
 | Label | The label (name) that for your device. |
 | WebsiteBaseURL | If you have the PowerControllerUI web app installed and running (see page 11), then enter the URL for the home page here. Assuming this is on the same machine as the PowerController installation, this will typically be http://127.0.0.1:8000. The PowerController uses this URL to pass device state information to the web site. |
 
@@ -98,15 +165,9 @@ The script uses the *config.yaml* YAML file for configuration. An example of inc
 | Channel | Which channel to we want to get the Amber prices for. By default, this should be *general*. If your device is connected to a controlled load meter, set this to *controlledLoad*. | 
 | Timeout | Number of seconds to wait for Amber to respond to an API call | 
 
-### Section: ShellySmartSwitch
+### Section: ShellyDevices
 
-| Parameter | Description | 
-|:--|:--|
-| Model | 	Which Shelly smart switch model are you using to control the load. Must be one of:<br>**ShellyEM**: Gen 1 Shelly energy meter with relay: To be used with an external contactor to switch the load and a 50A clamp to read energy use.<br>**ShellyPlus1PM**: Gen 2 Shelly 1PM switch with meter. This model has now been discontinued.<br>**Shelly1PMG3**: Gen 3 Shelly 1PM switch with meter. |
-| IPAddress | The local IP address of your Shelly Smart Switch |
-| SwitchID | If your smart switch has multiple relayed, the ID of the one to use. | 
-| DisableSwitch | If set to True, this will prevent the Power Controller from actually changing the switch state. Used for testing.| 
-| Timeout| Number of seconds to wait for the switch to respond to an API call | 
+In this section you can configure one or more Shelly Smart switches, one of which will be used to contro your pool pump or water heater and optionally monitor its energy usage. See the [Shelly Getting Started guide](https://nickelseyspelloc.github.io/sc_utility/guide/shelly_control/) for details on how to configure this section.
 
 ### Section: DeviceRunScheule
 
@@ -117,6 +178,7 @@ The script uses the *config.yaml* YAML file for configuration. An example of inc
 | TargetRunHoursPerDay | Desired daily average runtime over seven days.** | 
 | MaximumPriceToRun | Never run the device if the c/kWh electricity price is greater than this, even if we haven't run for the minimum number of hours today.| 
 | ThresholdAboveCheapestPricesForMinumumHours | If the device hasn't yet run for the minimum number of hours today, this parameter is used to determine whether the device should start now. The Power Controller looks at the prices for the time slots its plans to run on over rest of the day and takes the worst cheapest price from there. The device will only run now if the current price is less that the worst cheapest price factored by this parameter. | 
+| ManualSchedule | The times of day when the device should run. This is used when the Amber pricing API is not available or you want to manually control the device. Set the manual schedule hours to be longer than your TargetRunHoursPerDay and app will automatically adjust the run time to match the TargetRunHoursPerDay. Specify the StartTime and EndTime in 24-hour format (HH:MM) - for example, "08:00" for 8 AM and "16:00" for 4 PM. |
 | MonthlyTargetRunHoursPerDay| Optionally override the TargetRunHoursPerDay setting for a specific month. See above for the example of  January and February.** | 
 | NoRunPeriods | Optionally one or more StartDate / EndDate pairs that specify which dates the device should not run at all. Useful if the device is a hot water heater and you want to turn the power off while you are away. Dates must be entered as follows:<br>`- StartDate: "2025-05-07"`<br>&nbsp;&nbsp;&nbsp; `EndDate: "2025-10-01"`<br>`- StartDate: "2026-05-10"`<br>&nbsp;&nbsp;&nbsp; `EndDate: "2026-10-01"`  | 
 
@@ -127,13 +189,13 @@ The script uses the *config.yaml* YAML file for configuration. An example of inc
 | Parameter | Description | 
 |:--|:--|
 | SavedStateFile | JSON file name to store the Power Controller's device current state and history. | 
-| RunLogFile | Records a single status record each time the Power Controller script is run. If entry this is blank, this file won't be created.| 
-| RunLogFileMaxLines | Maximum number of lines to keep in the RunLogFile. If zero, file will never be truncated. | 
 | Logfile | A text log file that records progress messages and warnings. | 
 | LogfileMaxLines| Maximum number of lines to keep in the log file. If zero, file will never be truncated. | 
 | LogfileVerbosity | The level of detail captured in the log file. One of: none; error; warning; summary; detailed; debug; all | 
 | ConsoleVerbosity | Controls the amount of information written to the console. One of: error; warning; summary; detailed; debug; all. Errors are written to stderr all other messages are written to stdout | 
 | LatestPriceData | JSON file name storing latest price data fetched from the API. | 
+| DailyRunStatsCSV | Optionally save the daily run stats to a CSV file.| 
+| DailyRunStatsDaysToKeep | Number of days to keep the daily run stats CSV file. | 
 
 ### Section: Email
 
@@ -148,11 +210,18 @@ The script uses the *config.yaml* YAML file for configuration. An example of inc
 | SMTPPassword | The password used to login to the SMTP server. If using a Google account, create an app password for the PowerController at https://myaccount.google.com/apppasswords  |
 | SubjectPrefix | Optional. If set, the PowerController will add this text to the start of any email subject line for emails it sends. |
 
+### Section: HeartbeatMonitor
+
+| Parameter | Description | 
+|:--|:--|
+| WebsiteURL | Each time the app runs successfully, you can have it hit this URL to record a heartbeat. This is optional. If the app exist with a fatal error, it will append /fail to this URL. | 
+| HeartbeatTimeout | How long to wait for a response from the website before considering it down in seconds. | 
+
 
 # How It Works
 ## 1. Initialization:
 * Loads the configuration from *config.yaml*. If the configuration file is missing, it generates a default one.
-* Loads past runtime history from *PowerControllerState.json*.
+* Loads past runtime history from *system_state.json*.
 * Fetches your site ID via the Amber API.
 
 ## 2. Fetching Price Data:
@@ -172,10 +241,10 @@ The script uses the *config.yaml* YAML file for configuration. An example of inc
 
 # Setting up the Smart Switch
 The Power Controller is currently designed to physically start or stop the pool device via Shelly Smart Switch. This is a relay that can be connected to your local Wi-Fi network and controlled remotely via an API call. A detailed setup guide is beyond the scope of this document, but the brief steps are as follows:
-* Purchase a Shelly Smart Switch. I used the [Shelly 1PM Gen3](https://www.shelly.com/products/shelly-1pm-gen3), available in Australia from [OzSmartThings](https://www.ozsmartthings.com.au/products/shelly-1-gen3). 
+* Purchase a Shelly Smart Switch. I used the [Shelly2PMG3](https://www.shelly.com/products/shelly-2pm-gen3). See the [Models Library](https://www.shelly.com/products/shelly-2pm-gen3) for a list of supported models and which of these have an energy meter built in.
 * Install the switch so that the relay output controls power to your device and chlorine generator. 
-* 	Download the Shelly App from the app store (links on [this page](https://www.shelly.com/products/shelly-1pm-gen3)) and get the switch setup via the app so that you can turn the relay on and off via Wi-Fi (not Bluetooth).
-* Update the *PowerControllerConfig.yaml* file and set the IPAddress setting in the ShellySmartSwitch section to the IP of your Shelly device. 
+* 	Download the Shelly App from the app store (links on [this page](https://www.shelly.com/pages/shelly-app)) and get the switch setup via the app so that you can turn the relay on and off via Wi-Fi (not Bluetooth).
+* Update the *config.yaml* file and set the IPAddress setting in the ShellySmartSwitch section to the IP of your Shelly device. 
 * If possible, create a DHCP reservation for the Shelly device in your local router so that the IP doesn't change.
 
 # Running the Script
@@ -193,21 +262,14 @@ Please see https://github.com/NickElseySpelloC/AmberPowerControllerUI for more i
 # Logs and Data Files
 The Power Controller will first look for these files in the current working directory and failing that, the same directory that the PowerController.py file exists in. If the Power Controller needs to create any of these files, it will do so in the PowerController.py folder.
 
-* PowerControllerRun.csv: Logs each decision with the following information:
-    * Current Time: The time the script was run 
-    * Current Slot: The 30 minute slot as per the current time of day.
-    * Required Slots: How many 30 minute slots do we need to run the device during the rest of the day to stay on schedule.
-    * Current Price: the electricity price for the current slot. 
-    * Average Forecast Price: The average price for all the 30 minute slots that the device will run for during the rest of the day.
-    * Should Run: If TRUE, the device will be told to run until the next time this script is run.
-    This name of this CSV is set via the RunLogFile configuration parameter.
+* daily_run_stats.csv: Logs key metrics for each day's run.
 * logfile.log: Progress messages and warnings are written to this file. The logging level is controlled by the LogfileVerbosity configuration parameter.
-* LatestAmberPrices.json: Stores the latest electricity price data fetched from Amber API.
-* PowerControllerState.json: Tracks past seven days of runtime and today's runtime.
+* latest_prices.json: Stores the latest electricity price data fetched from Amber API (if configured)
+* system_state.json: Tracks past seven days of runtime and today's runtime. Please don't modify this file.
 
 # Troubleshooting
 ## "No module named xxx"
-Ensure all the Python modules are installed in the virtual environment. Make sure you are running the PowerController via the *PowerController.sh* script.
+Ensure all the Python modules are installed in the virtual environment. Make sure you are running the PowerController via the *launch.sh* script.
 
 ## ModuleNotFoundError: No module named 'requests' (macOS)
 If you can run the script just fine from the command line, but you're getting this error when running from crontab, make sure the crontab environment has the Python3 folder in it's path. First, at the command line find out where python3 is being run from:
@@ -216,71 +278,17 @@ If you can run the script just fine from the command line, but you're getting th
 
 And then add this to a PATH command in your crontab:
 
-`PATH=/usr/local/bin:/usr/bin:/bin`
-`0,15,30,45 * * * * /Users/bob/scripts/PowerController.sh `
+`PATH=/usr/local/bin:/usr/bin:/bin:/sbin`
+`0,15,30,45 * * * * /Users/bob/scripts/Launch.sh `
 
 ## API Errors
 If the script cannot fetch site IDs or prices, verify:
-* The API key in PowerControllerConfig.yaml is correct.
+* The API key in Config.yaml is correct.
 * Amber API is reachable.
 * The internet connection is active.
 
 ## Unexpected Behaviour
-* Check *PowerControllerState.json* to ensure it is correctly storing data.
-* Review *PowerControllerRun.csv* to see logged actions and pricing data.
+* Check *system_state.json* to ensure it is correctly storing data.
 
 # Appendix: PowerController State File
-The *PowerControllerState.json* file holds the detailed state of the PowerController system. A new file will be created with default values the first time PowerController is run. 
-
-You should never edit this file directly, but you can read the values from this file - for example to present in a web page. The structure is as follows:
-* **MaxDailyRuntimeAllowed**: Maximum number of hours that the device can run on any day - we should  never exceed this. As per the MaximumRunHoursPerDay configuration parameter.
-* **LastStateSaveTime**: Time this state was last written to file. 
-* **LastRunSuccessful**: True if the last run completed successfully 
-* **TotalRuntimePriorDays**: Total number of hours that we've run over the prior 7 days.
-* **AverageRuntimePriorDays**: Average number of hours that we've run each day over the prior 7 days.
-* **CurrentShortfall**: Cumulative shortfall runtime from the prior days 7 and today so far. 
-* **ForecastRuntimeToday**: The number of hours that the device will actually run for the rest of today. This should ideally be the same as DailyData[0][RemainingRuntimeToday], but if the MaximumPriceToRun configuration setting it too low, the PowerController won't be able to find sufficient time slots to run in.
-* **IsDeviceRunning**: Is the device currently running.
-* **DeviceLastStartTime**: When the device was last turned on. None if not the device isn't currently running.
-* **CurrentPrice**: Latest Amber price.
-* **PriceTime**: Time that the latest Amber price was retrieved. 
-* **EnergyAtLastStart**: The energy meter reading of the Shelly switch when the device was last started.
-* **EnergyUsed**: Cumulative energy used in Watt-Hours for the prior 7 days and today.
-* **TotalCost**: Total energy cost in cents for prior 7 days and today.
-* **AveragePrice**: Average energy price (c/kWh) for the prior 7 days and today.
-* **EarlierTotals**: Totals for all days more than 7 days prior to today.
-    * **EnergyUsed**: Cumulative energy used in Watts.
-    * **TotalCost**: Total cost in cents.
-    * **RunTime**: How many hours has the device run for.
-* **AlltimeTotals**: Totals for the all time including today.
-    * **EnergyUsed**: Cumulative energy used in Watts.
-    * **TotalCost**: Total cost in cents. 
-    * **AveragePrice**: Average price (c/kWh). 
-    * **RunTime**: How many hours has the device run for.
-* **TodayRunPlan[]** An array time slots windows during which we plan to run the device for the rest of the day. Will be empty if there's nothing more to do today.
-    * **ID**: Element index.
-    * **From**: Start time for this window, rounded down to the nearest 30 minutes.
-    * **To**: End time for this window, rounded up to the nearest 30 minutes.
-    * **AveragePrice**: The average forecast price that we will pay for energy during this window. This assumes that the device's energy usage is consistent. 
-* **AverageForecastPrice**: The average forecast price that we will pay for energy during all the time slots in today's run plan. 
-* **TodayOriginalRunPlan[]**: This is a copy of the TodayRunPlan[] array taken before the first device run of the day.
-* **DailyData[]**: An array of 8 elements representing the daily data for today and the 7 prior days.
-    * **ID**: Day number with today being 0 and the day 7 days prior being 7. 
-    * **Date**: The date of this day.
-    * **RequiredDailyRuntime**: How many hours should we run each day. Taken from the configuration values TargetRunHoursPerDay and MonthlyTargetRunHoursPerDay.
-    * **PriorShortfall**: Cumulative runtime shortfall (in hours) from the prior 7 days.
-    * **TargetRuntime**: Our goal of how many hours we wish to run on this date, taking into account the prior shortfall, RequiredDailyRuntime, and the minimum and maximum number of hours we are allowed to run each day.
-    * **RuntimeToday**: How many hours did we run this day.
-    * **RemainingRuntimeToday**: How many more hours do we have to run on this day. 
-    * **EnergyUsed**: Total energy used in Watt-Hours on this day.
-    * **AveragePrice**: Average price paid for all the eneregy used on this day.
-    * **TotalCost**: Total cost in cents paid for eneregy used on this day.
-    * **DeviceRuns[]**: Array of device runs. Each run logs the time when the device was switched on during this day.
-        * **ID**: The run number, starting at 0.
-        * **StartTme**: Time that device was started.
-        * **RunTime**: How long the device run for in hours. None if still running.
-        * **EndTime**: Time that device was stopped. None if still running.
-        * **EnergyUsedStart**: The Shelly switch energy meter reading when this run started.
-        * **EnergyUsedForRun**: The total energy used for this run. None if still running.
-        * **Price**: Price in cents for when device was started.
-        * **Cost**: Total cost in cents for this run. None if still running.
+The *system_state.json* file holds the detailed state of the PowerController system. A new file will be created with default values the first time PowerController is run. 

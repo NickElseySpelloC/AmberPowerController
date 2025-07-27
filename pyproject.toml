@@ -1,13 +1,13 @@
 [project]
 name = "powercontroller"
 version = "0.1.0"
-description = "Add your description here"
+description = "Amber Power Controller"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "cerberus>=1.3.7",
     "pyyaml>=6.0.2",
     "requests>=2.32.3",
+    "sc-utility>=2.0.5",
     "tzdata>=2025.2",
-    "sc-utility>=1.0.2",
 ]
