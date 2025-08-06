@@ -1,4 +1,4 @@
-# Overview
+# Amber Power Controller Overview
 The Power Controller is a Python-based automation tool that schedules and controls a power load based on electricity pricing and user-configurable parameters. It integrates with the Amber API to fetch real-time electricity prices and optimizes the device operation to minimize costs while maintaining required run-time thresholds.
 The Power Controller is currently designed for the following device types:
 * Pool Pump: The goal is to run the pump for a target number of hours every day and for at least a minimum number of hours. The schedule is set so that pump runs at the cheapest times of day.
@@ -10,6 +10,9 @@ The Power Controller is currently designed for the following device types:
 * Historical Tracking: Maintains past seven days of device runtime to optimize future scheduling.
 * Logging: Saves run-time decisions and electricity prices to a CSV file.
 * Automatic Configuration Handling: Creates a default configuration file if one does not exist.
+* Optionally integrate with the [PowerControllerViewer app](https://github.com/NickElseySpelloC/PowerControllerViewer) so that yu can view light status, schedules and history via a web interface.
+* Email notification for critical errors.
+* Integration with the BetterStack uptime for heatbeat monitoring
 
 # Installation & Setup
 ## Prerequisites
@@ -40,7 +43,7 @@ DeviceType:
   Meter: "Pool Meter 1"  
   # The name for your device, used in the web app and logs
   Label: iMac Pool Pump
-  # Set this to the homepage URL of the PowerControllerUI web app. This URL is used to transfer device status to the website.
+  # Set this to the homepage URL of the PowerControllerViewer web app. This URL is used to transfer device status to the website.
   WebsiteBaseURL: http://127.0.0.1:8000
   WebsiteAccessKey: <Your website API key here>
 
@@ -154,7 +157,9 @@ HeartbeatMonitor:
 | Switch | The Shelly smart switch to turn the pump on and off. Enter a name or ID that matches a ShellyDevices: Devices: Outputs section below. |
 | Meter | The Shelly smart switch emeter to monitor energy use. Can be blank. Enter a name or ID that matches a ShellyDevices: Devices: Meters section below. |
 | Label | The label (name) that for your device. |
-| WebsiteBaseURL | If you have the PowerControllerUI web app installed and running (see page 11), then enter the URL for the home page here. Assuming this is on the same machine as the PowerController installation, this will typically be http://127.0.0.1:8000. The PowerController uses this URL to pass device state information to the web site. |
+| WebsiteBaseURL | If you have the PowerControllerViewer web app installed and running (see page 11), then enter the URL for the home page here. Assuming this is on the same machine as the AmberPowerController installation, this will typically be http://127.0.0.1:8000. The AmberPowerController uses this URL to pass device state information to the web site. |
+| WebsiteAccessKey | If you have configured an access key for the PowerControllerViewer, configure it here.  |
+| WebsiteTimeout | How long to wait for a reponse from the PowerControllerViewer when posting state information. |
 
 ### Section: AmberAPI
 
@@ -201,14 +206,14 @@ In this section you can configure one or more Shelly Smart switches, one of whic
 
 | Parameter | Description | 
 |:--|:--|
-| EnableEmail | Set to *True* if you want to allow the PowerController to send emails. If True, the remaining settings in this section must be configured correctly. | 
-| SendSummary | If True, send a status summary email each time the PowerController runs. Useful to test that your email settings work. | 
-| DailyEnergyUseThreshold | If the total energy used (in Watts) exceeds this amount for any one day, send a warning via email. This might indicate that the device is running longer than expected. Look at the EnergyUsed entries for the last 7 days in the PowerControllerState.json file for your average usage. Set to blank or 0 to disable. | 
+| EnableEmail | Set to *True* if you want to allow the AmberPowerController to send emails. If True, the remaining settings in this section must be configured correctly. | 
+| SendSummary | If True, send a status summary email each time the AmberPowerController runs. Useful to test that your email settings work. | 
+| DailyEnergyUseThreshold | If the total energy used (in Watts) exceeds this amount for any one day, send a warning via email. This might indicate that the device is running longer than expected. Look at the EnergyUsed entries for the last 7 days in the system_state.json file for your average usage. Set to blank or 0 to disable. | 
 | SMTPServer | The SMTP host name that supports TLS encryption. If using a Google account, set to smtp.gmail.com |
 | SMTPPort | The port number to use to connect to the SMTP server. If using a Google account, set to 587 |
 | SMTPUsername | Your username used to login to the SMTP server. If using a Google account, set to your Google email address. |
-| SMTPPassword | The password used to login to the SMTP server. If using a Google account, create an app password for the PowerController at https://myaccount.google.com/apppasswords  |
-| SubjectPrefix | Optional. If set, the PowerController will add this text to the start of any email subject line for emails it sends. |
+| SMTPPassword | The password used to login to the SMTP server. If using a Google account, create an app password for the AmberPowerController at https://myaccount.google.com/apppasswords  |
+| SubjectPrefix | Optional. If set, the AmberPowerController will add this text to the start of any email subject line for emails it sends. |
 
 ### Section: HeartbeatMonitor
 
@@ -233,7 +238,7 @@ In this section you can configure one or more Shelly Smart switches, one of whic
 * Ensures the device runs at least the minimum required hours and does not exceed the maximum limit, selecting the cheapest slots to run on.
 * Turns the device on or off as appropriate via a Shelly Smart Switch.
 * Logs the device operation decision into the CSV file.
-* Updates *PowerControllerState.json* to track daily runtime.
+* Updates *system_state.json* to track daily runtime.
 
 ## 4. End-of-Day Update:
 * At midnight, the script updates historical run-time data to maintain a rolling seven-day history.
@@ -241,26 +246,28 @@ In this section you can configure one or more Shelly Smart switches, one of whic
 
 # Setting up the Smart Switch
 The Power Controller is currently designed to physically start or stop the pool device via Shelly Smart Switch. This is a relay that can be connected to your local Wi-Fi network and controlled remotely via an API call. A detailed setup guide is beyond the scope of this document, but the brief steps are as follows:
-* Purchase a Shelly Smart Switch. I used the [Shelly2PMG3](https://www.shelly.com/products/shelly-2pm-gen3). See the [Models Library](https://www.shelly.com/products/shelly-2pm-gen3) for a list of supported models and which of these have an energy meter built in.
-* Install the switch so that the relay output controls power to your device and chlorine generator. 
-* 	Download the Shelly App from the app store (links on [this page](https://www.shelly.com/pages/shelly-app)) and get the switch setup via the app so that you can turn the relay on and off via Wi-Fi (not Bluetooth).
-* Update the *config.yaml* file and set the IPAddress setting in the ShellySmartSwitch section to the IP of your Shelly device. 
+* Purchase a Shelly Smart Switch. See the [Models Library](https://nickelseyspelloc.github.io/sc_utility/guide/shelly_models_list/) for a list of supported models and which of these have an energy meter built in.
+* Install the switch so that the relay output controls power to your device. 
+* Download the Shelly App from the app store (links on [this page](https://www.shelly.com/pages/shelly-app)) and get the switch setup via the app so that you can turn the relay on and off via Wi-Fi (not Bluetooth).
+* Update the ShellyDevices section of your *config.yaml* file. 
 * If possible, create a DHCP reservation for the Shelly device in your local router so that the IP doesn't change.
 
 # Running the Script
 Execute the Python script using:
 
-`launch.sh`
+```bash
+launch.sh
+```
 
 The script will fetch price data, determine the current time slot, decide whether to run the device, and log the action taken. If no valid price data is available, it will log an error.
 
 # Web Interface 
 There's a companion web app that can be used to monitor the Power Controller status. This is a simple web page that shows the current state of the device and the last 7 days of history. It can support multiple instances of the Power Controller running on different devices. 
 
-Please see https://github.com/NickElseySpelloC/AmberPowerControllerUI for more information on how to install and run the web app.
+Please see https://github.com/NickElseySpelloC/PowerControllerViewer for more information on how to install and run the web app.
 
 # Logs and Data Files
-The Power Controller will first look for these files in the current working directory and failing that, the same directory that the PowerController.py file exists in. If the Power Controller needs to create any of these files, it will do so in the PowerController.py folder.
+The Power Controller will first look for these files in the current working directory and failing that, the same directory that the main.py file exists in. If the Power Controller needs to create any of these files, it will do so in the main.py folder.
 
 * daily_run_stats.csv: Logs key metrics for each day's run.
 * logfile.log: Progress messages and warnings are written to this file. The logging level is controlled by the LogfileVerbosity configuration parameter.
@@ -269,7 +276,7 @@ The Power Controller will first look for these files in the current working dire
 
 # Troubleshooting
 ## "No module named xxx"
-Ensure all the Python modules are installed in the virtual environment. Make sure you are running the PowerController via the *launch.sh* script.
+Ensure all the Python modules are installed in the virtual environment. Make sure you are running the AmberPowerController via the *launch.sh* script.
 
 ## ModuleNotFoundError: No module named 'requests' (macOS)
 If you can run the script just fine from the command line, but you're getting this error when running from crontab, make sure the crontab environment has the Python3 folder in it's path. First, at the command line find out where python3 is being run from:
@@ -290,5 +297,5 @@ If the script cannot fetch site IDs or prices, verify:
 ## Unexpected Behaviour
 * Check *system_state.json* to ensure it is correctly storing data.
 
-# Appendix: PowerController State File
-The *system_state.json* file holds the detailed state of the PowerController system. A new file will be created with default values the first time PowerController is run. 
+# Appendix: system_state State File
+The *system_state.json* file holds the detailed state of the AmberPowerController system. A new file will be created with default values the first time AmberPowerController is run. 

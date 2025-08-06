@@ -33,6 +33,7 @@ class PowerSchedulerState:
 
         # Create a default state dictionary
         self.default_state = {
+            "StateFileType": "AmberPowerController",
             "MaxDailyRuntimeAllowed": self.config.get("DeviceRunScheule", "MaximumRunHoursPerDay"),
             "LastStateSaveTime": DateHelper.now_str(),
             "TotalRuntimePriorDays": None,

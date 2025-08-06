@@ -135,7 +135,7 @@ class AmberHelper:
             self.logger.log_message(f"Timeout making Heartbeat ping: {e}", "error")
             return False
         except requests.RequestException as e:
-            self.logger.log_fatal_error(f"Heartbeat ping failed: {e}")
+            self.logger.log_message(f"Heartbeat ping failed: {e}", "error")
             return False
         else:
             if response.status_code == 200:

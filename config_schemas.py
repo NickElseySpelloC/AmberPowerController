@@ -19,12 +19,27 @@ class ConfigSchema:
                 "Channel": "general",
                 "Timeout": 10,
             },
-            "ShellySmartSwitch": {
-                "Model": "Shelly1PMG3",
-                "IPAddress": "<Your IP Here>",
-                "SwitchID": 0,
-                "DisableSwitch": False,
-                "Timeout": 10,
+            "ShellyDevices": {
+                "Devices": [
+                    {
+                        "Name": "Shelly 1",
+                        "Model": "Shelly2PMG3",
+                        "Hostname": "<Your Shelly device hostname here>",
+                        "Simulate": False,
+                        "Inputs": [
+                            {"Name": "Input 1", "ID": 0},
+                            {"Name": "Input 2", "ID": 1},
+                        ],
+                        "Outputs": [
+                            {"Name": "Switch 1", "ID": 0},
+                            {"Name": "Switch 1", "ID": 1},
+                        ],
+                        "Meters": [
+                            {"Name": "Meter 1", "ID": 0},
+                            {"Name": "Meter 2", "ID": 1},
+                        ],
+                    }
+                ],
             },
             "DeviceRunScheule": {
                 "MinimumRunHoursPerDay": 3,
@@ -34,12 +49,12 @@ class ConfigSchema:
                 "ThresholdAboveCheapestPricesForMinumumHours": 1.1,
             },
             "Files": {
-                "SavedStateFile": "PowerControllerState.json",
+                "SavedStateFile": "system_state.json",
                 "LogfileName": "logfile.log",
                 "LogfileMaxLines": 5000,
                 "LogfileVerbosity": "summary",
                 "ConsoleVerbosity": "summary",
-                "LatestPriceData": "LatestAmberPrices.json",
+                "LatestPriceData": "Amber_prices.json",
             },
             "Email": {
                 "EnableEmail": False,
@@ -60,9 +75,6 @@ class ConfigSchema:
             },
             "AmberAPI": {
                 "APIKey": "<Your API Key Here>",
-            },
-            "ShellySmartSwitch": {
-                "IPAddress": "<Your IP Here>",
             },
             "Email": {
                 "SMTPUsername": "<Your SMTP username here>",
@@ -132,6 +144,7 @@ class ConfigSchema:
                                         "type": "dict",
                                         "schema": {
                                             "Name": {"type": "string", "required": False, "nullable": True},
+                                            "Group": {"type": "string", "required": False, "nullable": True},
                                             "ID": {"type": "number", "required": False, "nullable": True},
                                         },
                                     },
@@ -160,7 +173,7 @@ class ConfigSchema:
                     "MaximumRunHoursPerDay": {"type": "number", "required": True, "min": 2, "max": 20},
                     "TargetRunHoursPerDay": {"type": "number", "required": True, "min": 2, "max": 20},
                     "MaximumPriceToRun": {"type": "number", "required": True, "min": 10, "max": 500},
-                    "ThresholdAboveCheapestPricesForMinumumHours": {"type": "number", "required": True, "min": 1.0, "max": 2.0},
+                    "ThresholdAboveCheapestPricesForMinumumHours": {"type": "number", "required": False, "nullable": True, "min": 1.0, "max": 2.0},
                     "ManualSchedule": {
                         "type": "list",
                         "required": False,
