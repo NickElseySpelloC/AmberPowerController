@@ -35,7 +35,9 @@ class AmberHelper:
             if no_run_periods is not None:
                 # Check if today falls within any of the no run periods
                 for period in no_run_periods:
-                    if period["StartDate"] <= date_today <= period["EndDate"]:
+                    start_date = DateHelper.parse_date(period["StartDate"])
+                    end_date = DateHelper.parse_date(period["EndDate"])
+                    if start_date and end_date and start_date <= date_today <= end_date:
                         return True
         return False
 
