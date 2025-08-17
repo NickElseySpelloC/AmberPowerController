@@ -11,6 +11,8 @@ from sc_utility import DateHelper, SCCommon, SCConfigManager, SCLogger
 
 from helper import AmberHelper
 
+from post_state_to_web_server import post_state_to_web_server
+
 HTTP_STATUS_FORBIDDEN = 403
 
 
@@ -167,31 +169,7 @@ class PowerSchedulerState:
             json.dump(self.state, file, indent=4)
 
         # Now if the WebsiteBaseURL hasbeen set, save the state to the web server
-        if self.config.get("DeviceType", "WebsiteBaseURL"):
-            api_url = self.config.get("DeviceType", "WebsiteBaseURL") + "/api/submit"  # type: ignore[attr-defined]
-
-            if self.config.get("DeviceType", "WebsiteAccessKey"):
-                access_key = self.config.get("DeviceType", "WebsiteAccessKey")
-                api_url += f"?key={access_key}"  # Add access_key as a query parameter
-
-            headers = {
-                "Content-Type": "application/json",
-            }
-            json_object = self.state
-
-            try:
-                response = requests.post(api_url, headers=headers, json=json_object, timeout=self.config.get("DeviceType", "WebsiteTimeout", default=5))  # type: ignore[attr-defined]
-                response.raise_for_status()
-                self.logger.log_message(f"Posted PowerSchedulerState to {api_url}", "debug")
-            except requests.exceptions.HTTPError as e:
-                if response.status_code == HTTP_STATUS_FORBIDDEN:  # Handle 403 Forbidden error
-                    self.logger.log_message(f"Access denied ({HTTP_STATUS_FORBIDDEN} Forbidden) when posting to {api_url}. Check your access key or permissions.", "error")
-                else:
-                    self.logger.log_message(f"HTTP error saving state to web server at {api_url}: {e}", "warning")
-            except requests.exceptions.ConnectionError as e:  # Trap connection error - ConnectionError
-                self.logger.log_message(f"Web server at {api_url} is unavailable. Error was: {e}", "warning")
-            except requests.exceptions.RequestException as e:
-                self.logger.log_fatal_error(f"Error saving state to web server at {api_url}: {e}")
+        post_state_to_web_server(self.config, self.logger, self.state, "DeviceType")        
 
     def get_daily_data(self, day_number: int) -> dict | None:
         """Returns a dict of the data for the specified day (offset days prior to today). If the day doesn't exist, returns None.
