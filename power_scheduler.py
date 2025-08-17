@@ -54,7 +54,13 @@ class PowerScheduler:
             average_price = 15.0
 
         # Create an instance of the PriceData class and get the latest prices for the remainder of today
-        self.price_data = PriceData(config, logger, average_price)
+        last_api_error_count = self.state["AmberAPIErrorCount"] or 0
+        self.price_data = PriceData(config, logger, last_api_error_count, average_price)
+
+        # Aow see how many concurrent API errors we have
+        last_api_error_count = self.price_data.get_api_error_count()
+        # And save this to the state
+        self.state["AmberAPIErrorCount"] = last_api_error_count
 
         # record whether we have live prices or not
         self.state["LivePrices"] = self.price_data.have_live_prices()

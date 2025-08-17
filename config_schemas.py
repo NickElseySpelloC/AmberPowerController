@@ -18,6 +18,7 @@ class ConfigSchema:
                 "BaseUrl": "https://api.amber.com.au/v1",
                 "Channel": "general",
                 "Timeout": 10,
+                "MaxConcurrentErrors": 10,
             },
             "ShellyDevices": {
                 "Devices": [
@@ -102,6 +103,7 @@ class ConfigSchema:
                     "BaseUrl": {"type": "string", "required": False, "nullable": True},
                     "Channel": {"type": "string", "required": False, "nullable": True, "allowed": ["general", "controlledLoad"]},
                     "Timeout": {"type": "number", "required": False, "nullable": True, "min": 5, "max": 60},
+                    "MaxConcurrentErrors": {"type": "number", "required": False, "nullable": True, "min": 0}
                 },
             },
             "ShellyDevices": {

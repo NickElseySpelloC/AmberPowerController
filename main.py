@@ -98,6 +98,11 @@ def main():
         # Send a heartbeat to the monitoring service
         scheduler.send_heartbeat()
 
+        # See if we have exceeded the maximum number of API errors
+        max_errors = config.get("AmberAPI", "MaxConcurrentErrors") or 0
+        if scheduler.state["AmberAPIErrorCount"] > max_errors > 0:  # pyright: ignore[reportOperatorIssue]
+            logger.log_fatal_error("Exceeded maximum number of concurrent Amber API errors. See log for details.")
+
         # If the prior run fails, send email that this run worked OK
         if logger.get_fatal_error():
             logger.log_message(f"{this_device_label} run was successful after a prior failure.", "summary")

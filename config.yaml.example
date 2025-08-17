@@ -22,6 +22,8 @@ AmberAPI:
   # Which channel do we get the price data for - one of general or controlledLoad
   Channel: general
   Timeout: 15
+  # Log a fatal error if we have exceeded the maximum number of API errors across multiple runs
+  MaxConcurrentErrors: 5
 
 # Settings for the Shelly Plus smart switch, used switch power to your device
   ShellyDevices:

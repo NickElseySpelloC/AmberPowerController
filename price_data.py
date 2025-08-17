@@ -13,13 +13,14 @@ from sc_utility import DateHelper, SCCommon, SCConfigManager, SCLogger
 class PriceData:
     """Class to manage the Amber price data for the device scheduler."""
 
-    def __init__(self, config: SCConfigManager, logger: SCLogger, average_price: float = 15.0):
+    def __init__(self, config: SCConfigManager, logger: SCLogger, api_error_count: int, average_price: float = 15.0):
         """
         Initialise the PriceData class.
 
         Args:
             config (SCConfigManager): The configuration manager instance.
             logger (SCLogger): The logger instance for logging messages.
+            api_error_count (int): The count of the number of concurrent Amber API errors.
             average_price (float): The average price to use in mock mode, default is 15.0 AUD/kWh.
         """
         self.config = config
@@ -27,6 +28,7 @@ class PriceData:
         self.prices = []
         self.prices_sorted = []
         self.mode = "live"  # Default mode is live, will be set to mock if no internet or no Amber configuration or no Amber site ID
+        self.api_error_count = api_error_count  # Count of the number of concurrent Amber API errors
 
         if not SCCommon.check_internet_connection():
             self.mode = "mock"
@@ -38,7 +40,7 @@ class PriceData:
             # Get the Amber site ID.
             self.site_id = self.get_site_id()
 
-            # If we returned None, there assume we have no internet connectivity
+            # If we returned None, there assume we have no internet connectivity or the Amber API is disabled
             if self.site_id is None:
                 self.logger.log_message("No Amber site information available. Using mock mode for electricity prices.", "warning")
                 self.mode = "mock"
@@ -75,6 +77,7 @@ class PriceData:
         base_url = self.config.get("AmberAPI", "BaseUrl")
         if not base_url:
             self.logger.log_message("Amber API Base URL is not configured, cannot fetch Amber site ID.", "debug")
+            self.api_error_count = 0
             return None
 
         headers = {
@@ -90,12 +93,14 @@ class PriceData:
             sites = response.json()
             for site in sites:
                 if site.get("status") == "active":
+                    self.api_error_count = 0
                     return site.get("id")
 
             self.logger.log_fatal_error("No active Amber sites found.")
 
         except requests.exceptions.ConnectionError as e:  # Trap connection error - ConnectionError
             self.logger.log_message(f"Connection error fetching Amber site ID at {url}: {e}", "warning")
+            self.api_error_count += 1
             return None
 
         except requests.exceptions.Timeout as e:  # Trap connection timeout error - ConnectTimeoutError
@@ -103,7 +108,8 @@ class PriceData:
             return None
 
         except requests.exceptions.RequestException as e:
-            self.logger.log_fatal_error(f"Error fetching Amber site ID: {e}")
+            self.logger.log_message(f"Error fetching Amber site ID: {e}", "error")
+            self.api_error_count += 1
             return None
         else:
             return None
@@ -117,6 +123,7 @@ class PriceData:
         """
         if not self.site_id:
             self.logger.log_message("No site Amber ID available. Cannot fetch prices.", "error")
+            self.api_error_count = 0
             return None
 
         self.logger.log_message("Downloading Amber prices for next 24 hours.", "summary")
@@ -135,14 +142,20 @@ class PriceData:
             price_data = response.json()
 
         except requests.exceptions.ConnectionError as e:  # Trap connection error - ConnectionError
-            self.logger.log_fatal_error(f"Connection error fetching Amber prices at {url}: {e}")
+            self.logger.log_message(f"Connection error fetching Amber prices at {url}: {e}", "warning")
+            self.api_error_count += 1
+            return None
 
         except requests.exceptions.Timeout as e:  # Trap connection timeout error - ConnectTimeoutError
-            self.logger.log_fatal_error(f"API timeout error fetching Amber prices at {url}: {e}")
+            self.logger.log_message(f"API timeout error fetching Amber prices at {url}: {e}", "warning")
+            return None
 
         except requests.exceptions.RequestException as e:
-            self.logger.log_fatal_error(f"Error fetching Amber prices: {e}")
+            self.logger.log_message(f"Error fetching Amber prices: {e}", "error")
+            self.api_error_count += 1
+            return None
 
+        self.api_error_count = 0
         # Add local time entries to the returned dict
         enhanced_data = []
         for entry in price_data:
@@ -203,6 +216,14 @@ class PriceData:
         self.logger.log_message(f"{len(return_prices)} prices fetched successfully.", "debug")
 
         return return_prices
+
+    def get_api_error_count(self) -> int:
+        """Returns the current count of API errors.
+
+        Returns:
+            int: The current count of API errors.
+        """
+        return self.api_error_count
 
     @staticmethod
     def generate_mock_prices(average_price: float) -> list[OrderedDict]:
