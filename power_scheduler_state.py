@@ -6,11 +6,9 @@ import math
 import random
 from typing import Any
 
-import requests
 from sc_utility import DateHelper, SCCommon, SCConfigManager, SCLogger
 
 from helper import AmberHelper
-
 from post_state_to_web_server import post_state_to_web_server
 
 HTTP_STATUS_FORBIDDEN = 403
@@ -169,7 +167,7 @@ class PowerSchedulerState:
             json.dump(self.state, file, indent=4)
 
         # Now if the WebsiteBaseURL hasbeen set, save the state to the web server
-        post_state_to_web_server(self.config, self.logger, self.state, "DeviceType")        
+        post_state_to_web_server(self.config, self.logger, self.state, "DeviceType")
 
     def get_daily_data(self, day_number: int) -> dict | None:
         """Returns a dict of the data for the specified day (offset days prior to today). If the day doesn't exist, returns None.
@@ -352,7 +350,7 @@ class PowerSchedulerState:
         self.state["EnergyUsed"] = 0
         self.state["TotalCost"] = 0
         self.state["AveragePrice"] = None
-        running_shortfall = 0   # Running shortfall from the prior day
+        running_shortfall = self.state["DailyData"][-1]["PriorShortfall"]   # Initialise running shortfall to be the last entry
 
         # Update the global aggregate numbers for the prior 7 days
         for day_data in reversed(self.state["DailyData"]):
